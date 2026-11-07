@@ -1,0 +1,8 @@
+# The DPU (w202-r6p0) drives the internal DSI panel and stays mutter's primary KMS device; Mesa
+# renders into it through Panfrost (kmsro). The Panfrost primary node has no outputs.
+SUBSYSTEM=="drm", KERNEL=="card[0-9]*", KERNEL!="card*-*", DRIVERS=="w202-r6p0-lk-dsi", TAG+="mutter-device-preferred-primary"
+SUBSYSTEM=="drm", KERNEL=="card[0-9]*", KERNEL!="card*-*", DRIVERS=="panfrost", TAG+="mutter-device-ignore"
+# USB-C DisplayPort (w202_dp.ko, driver "w202-dp" on 31890000.dptx): a separate KMS-only device with
+# one DisplayPort connector. Mutter drives it as a secondary GPU (copy into its GEM-DMA dumb buffers).
+# Never ignore it and never let it become the primary GPU.
+SUBSYSTEM=="drm", KERNEL=="card[0-9]*", KERNEL!="card*-*", DRIVERS=="w202-dp", TAG-="mutter-device-ignore", TAG-="mutter-device-preferred-primary"

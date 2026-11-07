@@ -43,3 +43,6 @@ dtc -I dts -O dtb -o output/devicetree/w202ds-server.dtb devicetree/w202ds-serve
 默认诊断配置保留 120 秒恢复计时；普通系统可设 `CONFIG_W202DS_DIAG_BOOT_TIMEOUT=0`，
 保留 `/dev/w202diagctl` 用户态兼容。新的标准 PMIC 重启路径、显示顺序和 USB 需要真机回归。
 配套使用本仓 DTSI 编译的 DTB，不能依赖已删除的启动时 GPU FDT 修补。
+
+USB-C 一线通需要 `config/fragments/usb-single-cable.config`（dw-dp、UMP9620 Type-C/PD、DP Alt Mode、bq256xx），在 `olddefconfig` 前以 `kernel/scripts/kconfig/merge_config.sh -m -O output/kernel output/kernel/.config config/fragments/usb-single-cable.config` 合入。
+其中 bq256xx 与 `Devices/charging` 模块绑定同一充电芯片节点，两套充电驱动择一，见 [USB / Type-C 接口](Devices/usb3/README.md)。

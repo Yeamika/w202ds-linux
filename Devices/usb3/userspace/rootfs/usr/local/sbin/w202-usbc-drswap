@@ -1,0 +1,9 @@
+#!/bin/sh
+# W200DS: TCPM never starts a DR_Swap. A PD source that is also a DP monitor/dock (it charges us,
+# so we are sink + UFP) needs us as host (DFP) before DP alt mode can be entered.
+P=/sys/class/typec/port0
+sleep 3
+grep -q '\[sink\]' $P/power_role || exit 0
+grep -q '\[device\]' $P/data_role || exit 0
+[ "$(cat $P/port0-partner/supports_usb_power_delivery 2>/dev/null)" = yes ] || exit 0
+echo host > $P/data_role

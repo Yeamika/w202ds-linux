@@ -1,26 +1,38 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Unisoc UMS9620 (qogirn6pro) USB 3.1 / USB 2.0 combo PHY for DWC3, device mode.
- * Ported from the Unisoc 5.4 kernel (drivers/usb/phy/phy-sprd-usb31-qogirn6pro.c). Charger detection (BC1.2),
- * the Type-C redriver (ptn38003a) and the usbm cross-PHY bookkeeping are left out: the PHY is brought up for
- * peripheral mode and D+/D- are switched from the PMIC charger detector to the PHY at probe.
+ * Ported from the Unisoc 5.4 kernel (drivers/usb/phy/phy-sprd-usb31-qogirn6pro.c). The Type-C redriver (ptn38003a)
+ * and the usbm cross-PHY bookkeeping are left out. On the board with a battery (the U30 Air) D+/D- go to the PMIC's
+ * BC1.2 detector first and to the PHY once it found a USB port (SDP, CDP), as 5.4's PHY and dwc3 hand them over
+ * (ums9620-bc12.h, kanoqwq b4748534); the boards without one (F50, V50) switch them to the PHY at probe, as before.
+ *
+ * The combo PHY also carries DisplayPort (the TCA runs USB3 + 2-lane DP, mux 3, from the USB init on): a generic
+ * PHY for the DPTX takes a DP reference beside dwc3's usb_phy one, so the PHY is shut down only when both are gone
+ * and is never reset under a live USB3 link, and sets the DP swing/pre-emphasis overrides (Unisoc's dp_link.c).
  *
  * Copyright (C) 2020 Spreadtrum Communications Inc.
  */
+#include <linux/bitfield.h>
 #include <linux/delay.h>
 #include <linux/err.h>
+#include <linux/extcon.h>
 #include <linux/io.h>
 #include <linux/kernel.h>
 #include <linux/mfd/syscon.h>
 #include <linux/module.h>
+#include <linux/mutex.h>
 #include <linux/of.h>
 #include <linux/of_platform.h>
+#include <linux/phy/phy.h>
+#include <linux/phy/phy-sprd-ums9620.h>
 #include <linux/platform_device.h>
 #include <linux/regmap.h>
 #include <linux/regulator/consumer.h>
 #include <linux/slab.h>
 #include <linux/usb/otg.h>
 #include <linux/usb/phy.h>
+#include <linux/usb/typec.h>
+#include <linux/workqueue.h>
 #include <dt-bindings/soc/sprd,qogirn6pro-mask.h>
 #include <dt-bindings/soc/sprd,qogirn6pro-regs.h>
 
@@ -44,9 +56,32 @@ struct sprd_ssphy {
 	atomic_t		reset;
 	atomic_t		inited;
 	bool			is_host;
+	bool			bc12_enabled, bc12_ready, bc12_stopping;
+	bool			vbus_present;
+	atomic_t		bc12_generation;
+	u32			bc12_seen;
+	unsigned int		bc12_samples;
+	bool			bc12_retry;
+	struct mutex		dpdm_lock;
+	struct regmap		*pmu_apb;
+	struct phy		*dp_phy;
+	struct mutex		pwr_lock;	/* the USB and DP users, PHY init and shutdown */
+	bool			usb_user, dp_user, pmu_forced;
+	enum typec_orientation	orientation;	/* last from TCPM; NONE: use AON BOOT_MODE bit10 */
+	bool			tca_valid;	/* the TCA routes by @tca_flip */
+	bool			tca_flip;	/* TCPC/SYSMODE b2 as last programmed */
+	const struct sprd_ssphy_dp_ops *dp_ops;	/* the DPTX side of the TCA */
+	void			*dp_data;
+	spinlock_t		bc12_event_lock;
+	struct delayed_work	bc12_work;
 };
 
 #define PHY_INIT_TIMEOUT 500
+
+static bool pmu_pll_force = true;
+module_param(pmu_pll_force, bool, 0644);
+MODULE_PARM_DESC(pmu_pll_force,
+		 "PMU USB31 PLL force-on and PHY power-stable at PHY init, cleared at shutdown (Unisoc; next init)");
 
 #define DISPC1_GLB_APB_EB		 (0x0)
 #define DISPC1_GLB_APB_RST		 (0x4)
@@ -133,34 +168,15 @@ struct sprd_ssphy {
 #define DEFAULT_SSPHY_CTL5_EYE_PATTERN			0x1e40a000
 #define DEFAULT_SSPHY_CTL6_EYE_PATTERN			0x5d000083
 
-static void sc27xx_dpdm_switch_to_phy(struct regmap *regmap, bool enable)
+static int sc27xx_dpdm_switch_to_phy(struct regmap *regmap, bool enable)
 {
-	int ret;
-	u32 val;
-
-	pr_info("switch dp/dm to %s\n", enable ? "usb" : "other");
-	ret = regmap_read(regmap, CHGR_DET_FGU_CTRL, &val);
-	if (ret) {
-		pr_err("%s, dp/dm switch reg read failed:%d\n",
-				__func__, ret);
-		return;
-	}
-
-	/*
-	 * bit14: 1 switch to USB phy, 0 switch to fast charger
-	 * bit0 : 1 switch to USB phy, 0 switch to BC1P2
-	 */
-	if (enable)
-		val = val | DP_DM_FS_ENB | DP_DM_BC_ENB;
-	else
-		val = val & ~(DP_DM_FS_ENB | DP_DM_BC_ENB);
-
-	ret = regmap_write(regmap, CHGR_DET_FGU_CTRL, val);
-	if (ret)
-		pr_err("%s, dp/dm switch reg write failed:%d\n",
-				__func__, ret);
+	/* Do not overwrite the detector delay fields in this shared register. */
+	return regmap_update_bits(regmap, CHGR_DET_FGU_CTRL,
+		DP_DM_FS_ENB | DP_DM_BC_ENB,
+		enable ? DP_DM_FS_ENB | DP_DM_BC_ENB : 0);
 }
 
+static void sprd_ssphy_bc12_role(struct sprd_ssphy *phy);
 
 static inline void sprd_ssphy_reset_core(struct sprd_ssphy *phy)
 {
@@ -204,13 +220,16 @@ static inline void sprd_ssphy_reset_core(struct sprd_ssphy *phy)
 	ret |= regmap_write(phy->ipa_dispc1_glb_apb, DISPC1_GLB_APB_RST, reg);
 }
 
-
 static int sprd_ssphy_set_vbus(struct usb_phy *x, int on)
 {
 	struct sprd_ssphy *phy = container_of(x, struct sprd_ssphy, phy);
 	u32 reg, msk;
 	int ret = 0;
+	bool was_host;
 
+	/* (always: bc12_enabled may still go false at the end of the probe, after dwc3 got the PHY) */
+	mutex_lock(&phy->dpdm_lock);
+	was_host = phy->is_host;
 	if (on) {
 		regmap_write(phy->ana_g0l, REG_ANLG_PHY_G0L_ANALOG_USB20_USB20_TRIMMING,
 					phy->host_eye_pattern);
@@ -268,9 +287,11 @@ static int sprd_ssphy_set_vbus(struct usb_phy *x, int on)
 		phy->is_host = false;
 	}
 
+	if (READ_ONCE(phy->bc12_enabled) && was_host != phy->is_host)
+		sprd_ssphy_bc12_role(phy);
+	mutex_unlock(&phy->dpdm_lock);
 	return ret;
 }
-
 
 /* Requirement from usb analog compliance tests */
 static void usb_config_4_cts(struct sprd_ssphy *phy)
@@ -308,18 +329,114 @@ static void usb_config_4_cts(struct sprd_ssphy *phy)
 	regmap_write(phy->ipa_usb31_dp, 0x48, phy->ssphy_ctl6_eye_pattern);
 }
 
+#define TCA_INTR_STS		0x08
+#define TCA_XA_ACK		BIT(0)
+#define TCA_XA_TIMEOUT		BIT(1)
+#define TCA_TCPC		0x14
+#define TCA_TCPC_MUX		GENMASK(1, 0)
+#define TCA_TCPC_MUX_NONE	0
+#define TCA_TCPC_MUX_USB_DP2	3
+#define TCA_TCPC_FLIP		BIT(2)
+#define TCA_TCPC_LOW_POWER	BIT(3)
+#define TCA_TCPC_VALID		BIT(4)
+#define TCA_SYSMODE_CFG		0x18
+#define TCA_SYSMODE_FLIP	BIT(2)
 
-static int sprd_ssphy_init(struct usb_phy *x)
+#define TCA_XACT_TIMEOUT_MS	3000	/* > the TCA's own xa timeout */
+#define TCA_DP_RELEASE_MS	100
+
+/*
+ * One TCPC transaction: write @tcpc (VALID set) and wait for the TCA's xa ack or its own timeout event (~2.5 s with
+ * CTRLSYNCMODE_CFG1 0x3d090). Never stop waiting before the TCA does: a request written while the previous one is
+ * still pending wedged the TCA (no event at all, every later request failed too). Returns INTR_STS, 0 if no event.
+ *
+ * Controller-synced mode also waits for the DPTX: the TCA asserts typec_disable in its TYPE_C_CTRL and needs the
+ * DP lanes quiesced and DISABLE_ACK raised, then dropped once it releases. The DP driver's hook does that; keep
+ * calling it until the handshake is back to idle.
+ */
+static u32 sprd_ssphy_tca_xact(struct sprd_ssphy *phy, u32 tcpc)
 {
-	struct sprd_ssphy *phy = container_of(x, struct sprd_ssphy, phy);
+	unsigned long deadline;
+	u32 sts;
+
+	writel_relaxed(0xffff, phy->base + TCA_INTR_STS);
+	if (phy->dp_ops)
+		phy->dp_ops->tca_ack(phy->dp_data);
+	writel_relaxed(tcpc | TCA_TCPC_VALID, phy->base + TCA_TCPC);
+	deadline = jiffies + msecs_to_jiffies(TCA_XACT_TIMEOUT_MS);
+	for (;;) {
+		usleep_range(1000, 2000);
+		sts = readl_relaxed(phy->base + TCA_INTR_STS);
+		if (sts & (TCA_XA_ACK | TCA_XA_TIMEOUT))
+			break;
+		if (time_after(jiffies, deadline)) {
+			sts = 0;
+			break;
+		}
+		if (phy->dp_ops)
+			phy->dp_ops->tca_ack(phy->dp_data);
+	}
+	writel_relaxed(0xffff, phy->base + TCA_INTR_STS);
+
+	deadline = jiffies + msecs_to_jiffies(TCA_DP_RELEASE_MS);
+	while (phy->dp_ops && phy->dp_ops->tca_ack(phy->dp_data) && time_before(jiffies, deadline))
+		usleep_range(1000, 2000);
+	return sts;
+}
+
+/*
+ * TCA TCPC (0x14): mux[1:0] 3 = USB3 + DP 2-lane, b4 = VALID (starts the transaction); TCPC b2 and SYSMODE_CFG
+ * (0x18) b2 = @flip, set for a reversed plug. Unisoc sets them when AON BOOT_MODE bit10 is clear, which our
+ * Type-C port reports as TYPEC_ORIENTATION_REVERSE; a normal plug (bit10 set) runs with both clear, as measured
+ * with USB3 SuperSpeed and DP link training both up.
+ *
+ * The orientation only changes from "no connection": going from a flipped mux 3 straight to a normal mux 3
+ * never got the xa ack (timed out every time, the TCA kept the flipped routing). So when the flip changes on a
+ * connected mux, pass through mux 0 first. Interrupt enables and the controller-synced mode are set up by
+ * sprd_ssphy_hw_init(). pwr_lock held.
+ */
+static int sprd_ssphy_tca_program(struct sprd_ssphy *phy, bool flip)
+{
+	u32 tcpc = readl_relaxed(phy->base + TCA_TCPC), sys, sts;
+
+	if (FIELD_GET(TCA_TCPC_MUX, tcpc) != TCA_TCPC_MUX_NONE && !!(tcpc & TCA_TCPC_FLIP) != flip) {
+		tcpc &= ~(TCA_TCPC_MUX | TCA_TCPC_LOW_POWER | TCA_TCPC_VALID);
+		sts = sprd_ssphy_tca_xact(phy, tcpc | TCA_TCPC_MUX_NONE);
+		if (!(sts & TCA_XA_ACK))
+			dev_warn(phy->phy.dev, "TCA disconnect before flip: INTR_STS 0x%x\n", sts);
+	}
+
+	sys = readl_relaxed(phy->base + TCA_SYSMODE_CFG);
+	if (flip)
+		sys |= TCA_SYSMODE_FLIP;
+	else
+		sys &= ~TCA_SYSMODE_FLIP;
+	writel_relaxed(sys, phy->base + TCA_SYSMODE_CFG);
+
+	tcpc &= ~(TCA_TCPC_MUX | TCA_TCPC_FLIP | TCA_TCPC_LOW_POWER | TCA_TCPC_VALID);
+	tcpc |= TCA_TCPC_MUX_USB_DP2;
+	if (flip)
+		tcpc |= TCA_TCPC_FLIP;
+	sts = sprd_ssphy_tca_xact(phy, tcpc);
+	if (sts & TCA_XA_ACK) {
+		phy->tca_flip = flip;
+		phy->tca_valid = true;
+		return 0;
+	}
+	/* routing unknown: the next orientation report programs it again */
+	phy->tca_valid = false;
+	dev_dbg(phy->phy.dev, "TCA %s: INTR_STS 0x%x\n", flip ? "flipped" : "normal", sts);
+	return -ETIMEDOUT;
+}
+
+/* The full PHY bring-up and the TCA in USB3 + DP 2-lane (mux 3); pwr_lock held, PHY not inited. */
+static int sprd_ssphy_hw_init(struct sprd_ssphy *phy)
+{
+	struct usb_phy *x = &phy->phy;
 	u32	reg, msk;
 	int	ret = 0;
 	int timeout;
-
-	if (atomic_read(&phy->inited)) {
-		dev_info(x->dev, "%s is already inited!\n", __func__);
-		return 0;
-	}
+	bool flip;
 
 	
 	/*
@@ -469,42 +586,23 @@ static int sprd_ssphy_init(struct usb_phy *x)
 	reg |= BIT(0) | BIT(1);
 	writel_relaxed(reg, phy->base + 0x04);
 
-	/* usb3 switch port */
-	/* remove usbonly,add combophy for dp/usb */
-	ret |= regmap_read(phy->aon_apb, REG_AON_APB_BOOT_MODE, &reg);
-	msk = readl_relaxed(phy->base + 0x14);
-	if ((reg & BIT(10))) {
-		msk &= ~(BIT(2) | BIT(3));
-		msk |= BIT(0) | BIT(1) | BIT(4);
+	/* usb3 switch port: USB3 + DP 2-lane (remove usbonly, add combophy for dp/usb) */
+	if (phy->orientation != TYPEC_ORIENTATION_NONE) {
+		flip = phy->orientation == TYPEC_ORIENTATION_REVERSE;
 	} else {
-		msk &= ~BIT(3);
-		msk |= BIT(0) | BIT(1) | BIT(2) | BIT(4);
+		ret |= regmap_read(phy->aon_apb, REG_AON_APB_BOOT_MODE, &reg);
+		flip = !(reg & BIT(10));
 	}
-	writel_relaxed(msk, phy->base + 0x14);
-
-	msk = readl_relaxed(phy->base + 0x18);
-	if (reg & BIT(10))
-		msk &= ~BIT(2);
-	else
-		msk |= BIT(2);
-	writel_relaxed(msk, phy->base + 0x18);
-
-	msleep(10);
-	/* wait tca interrupt */
-	timeout = PHY_INIT_TIMEOUT;
-	while (1) {
-		reg = readl_relaxed(phy->base + 0x08);
-		if ((reg & BIT(0)) == BIT(0) || (reg & BIT(1)) == BIT(1)) {
-			msk = 0xffff;
-			writel_relaxed(msk, phy->base + 0x08);
-			break;
-		} else {
-			msleep(1);
-			if (!--timeout) {
-				dev_err(x->dev, "%s tca interrupt not ready\n", __func__);
-				break;
-			}
-		}
+	phy->tca_valid = false;
+	if (phy->dp_ops) {
+		/*
+		 * With the DP driver bound the DPTX is down here (resume), and the TCA waits for its handshake: the
+		 * transaction timed out after ~2.5 s and left USB3 and DP unrouted. Let the DP driver switch the TCA
+		 * with the DPTX powered (sprd_ssphy_set_orientation()); its HPD waits for that before link training.
+		 */
+		phy->dp_ops->tca_request(phy->dp_data);
+	} else if (sprd_ssphy_tca_program(phy, flip)) {
+		dev_warn(x->dev, "init: TCA %s not acked\n", flip ? "flipped" : "normal");
 	}
 
 	if (!phy->pmic) {
@@ -515,23 +613,33 @@ static int sprd_ssphy_init(struct usb_phy *x)
 		usleep_range(1000, 2000);
 	}
 
+	/* USB31 PLL forced on, PHY PCS/UPCS power stable (Unisoc's init, last) */
+	if (phy->pmu_apb && READ_ONCE(pmu_pll_force)) {
+		regmap_update_bits(phy->pmu_apb, REG_PMU_APB_USB31PLLV_REL_CFG,
+				   MASK_PMU_APB_USB31PLLV_FRC_ON, MASK_PMU_APB_USB31PLLV_FRC_ON);
+		regmap_update_bits(phy->pmu_apb, REG_PMU_APB_SNPS_PHY_PWR_STABLE,
+				   MASK_PMU_APB_REG_USB31_PHY_UPCS_PWR_STABLE |
+				   MASK_PMU_APB_REG_USB31_PHY_PCS_PWR_STABLE,
+				   MASK_PMU_APB_REG_USB31_PHY_UPCS_PWR_STABLE |
+				   MASK_PMU_APB_REG_USB31_PHY_PCS_PWR_STABLE);
+		phy->pmu_forced = true;
+	}
+
 	atomic_set(&phy->inited, 1);
 
 	return ret;
 }
 
-
-/* Turn off PHY and core */
-static void sprd_ssphy_shutdown(struct usb_phy *x)
+/* Turn off PHY and core; pwr_lock held */
+static void sprd_ssphy_hw_shutdown(struct sprd_ssphy *phy)
 {
-	struct sprd_ssphy *phy = container_of(x, struct sprd_ssphy, phy);
+	struct usb_phy *x = &phy->phy;
 	u32 msk = 0, reg = 0;
 
 	if (!atomic_read(&phy->inited)) {
 		dev_dbg(x->dev, "%s is already shut down\n", __func__);
 		return;
 	}
-
 
 		if (true) {
 		msk = BIT_ANLG_PHY_G0L_ANALOG_USB20_USB20_ISO_SW_EN;
@@ -586,11 +694,232 @@ static void sprd_ssphy_shutdown(struct usb_phy *x)
 	if (phy->vdd && regulator_is_enabled(phy->vdd))
 		regulator_disable(phy->vdd);
 
-	
+	if (phy->pmu_forced) {
+		regmap_update_bits(phy->pmu_apb, REG_PMU_APB_USB31PLLV_REL_CFG,
+				   MASK_PMU_APB_USB31PLLV_FRC_ON, 0);
+		regmap_update_bits(phy->pmu_apb, REG_PMU_APB_SNPS_PHY_PWR_STABLE,
+				   MASK_PMU_APB_REG_USB31_PHY_UPCS_PWR_STABLE |
+				   MASK_PMU_APB_REG_USB31_PHY_PCS_PWR_STABLE, 0);
+		phy->pmu_forced = false;
+	}
+
 	atomic_set(&phy->inited, 0);
 	atomic_set(&phy->reset, 0);
 }
 
+/* dwc3's usb_phy user */
+static int sprd_ssphy_init(struct usb_phy *x)
+{
+	struct sprd_ssphy *phy = container_of(x, struct sprd_ssphy, phy);
+	int ret = 0;
+
+	mutex_lock(&phy->pwr_lock);
+	if (atomic_read(&phy->inited))
+		dev_info(x->dev, "%s is already inited%s\n", __func__, phy->dp_user ? " (DP)" : "");
+	else
+		ret = sprd_ssphy_hw_init(phy);
+	if (!ret)
+		phy->usb_user = true;
+	mutex_unlock(&phy->pwr_lock);
+
+	return ret;
+}
+
+static void sprd_ssphy_shutdown(struct usb_phy *x)
+{
+	struct sprd_ssphy *phy = container_of(x, struct sprd_ssphy, phy);
+
+	mutex_lock(&phy->pwr_lock);
+	phy->usb_user = false;
+	if (phy->dp_user)
+		dev_dbg(x->dev, "shutdown deferred: DP holds the PHY\n");
+	else
+		sprd_ssphy_hw_shutdown(phy);
+	mutex_unlock(&phy->pwr_lock);
+}
+
+/* --- DisplayPort: a second user of the combo PHY --- */
+
+static int sprd_ssphy_dp_power_on(struct phy *gphy)
+{
+	struct sprd_ssphy *phy = phy_get_drvdata(gphy);
+	int ret = 0;
+
+	mutex_lock(&phy->pwr_lock);
+	/* with USB up the PHY and the TCA (mux 3) are ready: nothing is reset under a live USB3 link */
+	if (!atomic_read(&phy->inited))
+		ret = sprd_ssphy_hw_init(phy);
+	if (!ret)
+		phy->dp_user = true;
+	mutex_unlock(&phy->pwr_lock);
+
+	return ret;
+}
+
+static int sprd_ssphy_dp_power_off(struct phy *gphy)
+{
+	struct sprd_ssphy *phy = phy_get_drvdata(gphy);
+
+	mutex_lock(&phy->pwr_lock);
+	phy->dp_user = false;
+	if (!phy->usb_user)
+		sprd_ssphy_hw_shutdown(phy);
+	mutex_unlock(&phy->pwr_lock);
+
+	return 0;
+}
+
+/* the PHY's CR registers through the usb31_dp glue's indirect window (address at 0x8, data at 0xc) */
+#define USB31_DP_CR_CTRL		0x20
+#define USB31_DP_CR_APB_EN		BIT(4)
+#define USB31_DP_CR_CLK_EN		BIT(3)
+#define USB31_DP_CR_ADDR		0x8
+#define USB31_DP_CR_DATA		0xc
+#define USB31_DP_CR_SEL			0x10000
+#define CR_SUP_DIG_LVL_OVER_IN		0x21
+#define CR_TX_VBOOST_LVL_DP		0xf0	/* Unisoc's shipped dptx_link_set_preemp_vswing */
+#define CR_DP_TX_SWING			0x9002
+#define CR_DP_TX_EQ			0x9003
+
+/* [voltage swing][pre-emphasis]: CR 0x9002, CR 0x9003 (Unisoc dp_link.c); 0 = not a valid DP level pair */
+static const u16 sprd_ssphy_dp_levels[4][4][2] = {
+	{ { 0x570, 0x2000 }, { 0x5d0, 0x2300 }, { 0x620, 0x2580 }, { 0x6a0, 0x2980 } },
+	{ { 0x620, 0x2000 }, { 0x6a0, 0x2400 }, { 0x700, 0x2700 }, { 0, 0 } },
+	{ { 0x6e0, 0x2000 }, { 0x760, 0x2400 }, { 0, 0 }, { 0, 0 } },
+	{ { 0x7e0, 0x2000 }, { 0, 0 }, { 0, 0 }, { 0, 0 } },
+};
+
+static void sprd_ssphy_cr_select(struct sprd_ssphy *phy, u32 addr)
+{
+	regmap_write(phy->ipa_usb31_dp, USB31_DP_CR_ADDR, USB31_DP_CR_SEL | addr);
+}
+
+static int sprd_ssphy_dp_configure(struct phy *gphy, union phy_configure_opts *opts)
+{
+	struct sprd_ssphy *phy = phy_get_drvdata(gphy);
+	struct phy_configure_opts_dp *dp = &opts->dp;
+	unsigned int lane, vs, pe;
+	int ret = 0;
+	u32 reg;
+
+	/* rate and lanes go from the DPTX over its PHY interface: only what the TCA's mux 3 can carry */
+	if ((dp->set_lanes || dp->set_voltages) && (dp->lanes < 1 || dp->lanes > gphy->attrs.bus_width))
+		return -EINVAL;
+	if (dp->set_rate && dp->link_rate != 1620 && dp->link_rate != 2700 && dp->link_rate != 5400)
+		return -EINVAL;
+	if (!dp->set_voltages)
+		return 0;
+
+	/* one setting for the PHY: the last lane's, as Unisoc's driver does */
+	lane = dp->lanes - 1;
+	vs = dp->voltage[lane];
+	pe = dp->pre[lane];
+	if (vs > 3 || pe > 3 || !sprd_ssphy_dp_levels[vs][pe][0])
+		return -EINVAL;
+
+	mutex_lock(&phy->pwr_lock);
+	if (!atomic_read(&phy->inited)) {
+		ret = -ENODEV;
+		goto out;
+	}
+	regmap_update_bits(phy->ipa_usb31_dp, USB31_DP_CR_CTRL, USB31_DP_CR_APB_EN, USB31_DP_CR_APB_EN);
+	regmap_update_bits(phy->ipa_usb31_dp, USB31_DP_CR_CTRL, USB31_DP_CR_CLK_EN, USB31_DP_CR_CLK_EN);
+
+	sprd_ssphy_cr_select(phy, CR_SUP_DIG_LVL_OVER_IN);
+	regmap_read(phy->ipa_usb31_dp, USB31_DP_CR_DATA, &reg);
+	regmap_write(phy->ipa_usb31_dp, USB31_DP_CR_DATA, reg | CR_TX_VBOOST_LVL_DP);
+
+	sprd_ssphy_cr_select(phy, CR_DP_TX_SWING);
+	regmap_write(phy->ipa_usb31_dp, USB31_DP_CR_DATA, sprd_ssphy_dp_levels[vs][pe][0]);
+	sprd_ssphy_cr_select(phy, CR_DP_TX_EQ);
+	regmap_write(phy->ipa_usb31_dp, USB31_DP_CR_DATA, sprd_ssphy_dp_levels[vs][pe][1]);
+out:
+	mutex_unlock(&phy->pwr_lock);
+	return ret;
+}
+
+static const struct phy_ops sprd_ssphy_dp_ops = {
+	.power_on = sprd_ssphy_dp_power_on,
+	.power_off = sprd_ssphy_dp_power_off,
+	.configure = sprd_ssphy_dp_configure,
+	.owner = THIS_MODULE,
+};
+
+static void sprd_ssphy_put_dp_phy(void *data)
+{
+	put_device(data);
+}
+
+struct phy *devm_sprd_ssphy_get_dp_phy(struct device *dev)
+{
+	struct device_node *np = of_parse_phandle(dev->of_node, "dp-usbphy", 0);
+	struct platform_device *pdev;
+	struct sprd_ssphy *phy;
+	struct phy *dp_phy = NULL;
+	int ret;
+
+	if (!np)
+		return ERR_PTR(-ENODEV);
+	pdev = of_find_device_by_node(np);
+	of_node_put(np);
+	if (!pdev)
+		return ERR_PTR(-EPROBE_DEFER);
+
+	/* bound, and done probing (drvdata is set before the DP PHY exists) */
+	device_lock(&pdev->dev);
+	phy = pdev->dev.driver ? platform_get_drvdata(pdev) : NULL;
+	if (phy && phy->dp_phy) {
+		dp_phy = phy->dp_phy;
+		get_device(&dp_phy->dev);
+	}
+	device_unlock(&pdev->dev);
+	put_device(&pdev->dev);
+	if (!dp_phy)
+		return ERR_PTR(-EPROBE_DEFER);
+
+	ret = devm_add_action_or_reset(dev, sprd_ssphy_put_dp_phy, &dp_phy->dev);
+	if (ret)
+		return ERR_PTR(ret);
+
+	return dp_phy;
+}
+EXPORT_SYMBOL_GPL(devm_sprd_ssphy_get_dp_phy);
+
+int sprd_ssphy_set_orientation(struct phy *dp_phy, enum typec_orientation orientation)
+{
+	struct sprd_ssphy *phy = phy_get_drvdata(dp_phy);
+	bool flip;
+	int ret = 0;
+
+	if (orientation == TYPEC_ORIENTATION_NONE)
+		return 0;
+
+	mutex_lock(&phy->pwr_lock);
+	phy->orientation = orientation;
+	/* a PHY that is down programs the TCA from @orientation in its next sprd_ssphy_hw_init() */
+	flip = orientation == TYPEC_ORIENTATION_REVERSE;
+	if (atomic_read(&phy->inited) && (!phy->tca_valid || phy->tca_flip != flip)) {
+		ret = sprd_ssphy_tca_program(phy, flip);
+		if (ret)
+			dev_err(phy->phy.dev, "TCA orientation %s: no xa ack\n", flip ? "flipped" : "normal");
+		else
+			dev_info(phy->phy.dev, "TCA orientation %s\n", flip ? "flipped" : "normal");
+	}
+	mutex_unlock(&phy->pwr_lock);
+	return ret;
+}
+EXPORT_SYMBOL_GPL(sprd_ssphy_set_orientation);
+
+void sprd_ssphy_set_dp_ops(struct phy *dp_phy, const struct sprd_ssphy_dp_ops *ops, void *data)
+{
+	struct sprd_ssphy *phy = phy_get_drvdata(dp_phy);
+
+	mutex_lock(&phy->pwr_lock);
+	phy->dp_ops = ops;
+	phy->dp_data = data;
+	mutex_unlock(&phy->pwr_lock);
+}
+EXPORT_SYMBOL_GPL(sprd_ssphy_set_dp_ops);
 
 static int sprd_ssphy_notify_connect(struct usb_phy *x,
 				enum usb_device_speed speed)
@@ -651,11 +980,26 @@ static int sprd_ssphy_notify_disconnect(struct usb_phy *x,
 	return 0;
 }
 
+#include "ums9620-bc12.h"
 
-/* VBUS from extcon-usb-gpio: report VBUS valid to the PHY (EXTCON_USB only, no charger-type cables needed) */
+/* Battery boards detect before data-line handoff, without sleeping in extcon. */
 static int sprd_ssphy_vbus_notify(struct notifier_block *nb, unsigned long event, void *data)
 {
 	struct usb_phy *x = container_of(nb, struct usb_phy, vbus_nb);
+	struct sprd_ssphy *phy = container_of(x, struct sprd_ssphy, phy);
+
+	if (phy->bc12_enabled) {
+		unsigned long flags;
+
+		spin_lock_irqsave(&phy->bc12_event_lock, flags);
+		WRITE_ONCE(phy->vbus_present, !!event);
+		WRITE_ONCE(x->chg_type, UNKNOWN_TYPE);
+		atomic_inc(&phy->bc12_generation);
+		if (READ_ONCE(phy->bc12_ready) && !READ_ONCE(phy->bc12_stopping))
+			mod_delayed_work(system_power_efficient_wq, &phy->bc12_work, 0);
+		spin_unlock_irqrestore(&phy->bc12_event_lock, flags);
+		return NOTIFY_OK;
+	}
 
 	dev_info(x->dev, "vbus %s\n", event ? "on" : "off");
 	if (event)
@@ -746,6 +1090,12 @@ static int sprd_ssphy_probe(struct platform_device *pdev)
 	phy->pmic = sprd_ssphy_pmic_regmap(dev);
 	if (!phy->pmic)
 		return dev_err_probe(dev, -EPROBE_DEFER, "PMIC regmap not ready\n");
+	phy->bc12_enabled = sprd_ssphy_has_battery();
+	mutex_init(&phy->dpdm_lock);
+	mutex_init(&phy->pwr_lock);
+	spin_lock_init(&phy->bc12_event_lock);
+	INIT_DELAYED_WORK(&phy->bc12_work, sprd_ssphy_bc12_work);
+	atomic_set(&phy->bc12_generation, 1);
 
 	phy->base = devm_platform_ioremap_resource_byname(pdev, "phy_glb_regs");
 	if (IS_ERR(phy->base))
@@ -764,6 +1114,13 @@ static int sprd_ssphy_probe(struct platform_device *pdev)
 	SYSCON(ipa_usb31_dp, "sprd,syscon-ipa-usb31-dp");
 	SYSCON(ipa_usb31_dptx, "sprd,syscon-ipa-usb31-dptx");
 #undef SYSCON
+	/* the PMU writes are an addition: without the syscon USB keeps working as before */
+	phy->pmu_apb = syscon_regmap_lookup_by_phandle(np, "sprd,syscon-pmu-apb");
+	if (IS_ERR(phy->pmu_apb)) {
+		dev_warn(dev, "no PMU APB (%ld): USB31 PLL force-on and PHY power-stable left alone\n",
+			 PTR_ERR(phy->pmu_apb));
+		phy->pmu_apb = NULL;
+	}
 
 	if (of_property_read_u32(np, "sprd,vdd-voltage", &phy->vdd_vol))
 		phy->vdd_vol = 3300000;
@@ -808,20 +1165,81 @@ static int sprd_ssphy_probe(struct platform_device *pdev)
 	phy->phy.otg->set_vbus = sprd_ssphy_otg_set_vbus;
 
 	sprd_ssphy_vbus_source(dev);
+	if (phy->bc12_enabled) {
+		phy->phy.charger_detect = sprd_ssphy_charger_detect;
+		ret = sc27xx_dpdm_switch_to_phy(phy->pmic, false);
+		if (!ret)
+			ret = regmap_update_bits(phy->pmic, CHGR_DET_FGU_CTRL,
+						 GENMASK(11, 8), 2 << 8);
+		/*
+		 * MU300: kanoqwq's version failed the probe here and below, which leaves the board without USB (no
+		 * network, no serial console). USB comes first: D+/D- go to the PHY as on the other boards, and the
+		 * charger keeps a USB port's 500 mA (or the Type-C Rp current).
+		 */
+		if (ret) {
+			dev_err(dev, "BC1.2 detector setup failed (%d): D+/D- to USB without charger detection\n", ret);
+			phy->bc12_enabled = false;
+		}
+	}
 	ret = usb_add_phy_dev(&phy->phy);
 	if (ret)
 		return dev_err_probe(dev, ret, "cannot add phy\n");
 
-	/* device mode only for now: route D+/D- from the charger detector to the USB PHY */
-	sc27xx_dpdm_switch_to_phy(phy->pmic, true);
-	dev_info(dev, "UMS9620 USB 3.1 PHY registered\n");
+	if (phy->bc12_enabled && IS_ERR_OR_NULL(phy->phy.edev)) {
+		dev_err(dev, "no VBUS extcon: D+/D- to USB without charger detection\n");
+		phy->bc12_enabled = false;
+	}
+	if (phy->bc12_enabled) {
+		WRITE_ONCE(phy->bc12_ready, true);
+		sprd_ssphy_vbus_notify(&phy->phy.vbus_nb,
+			extcon_get_state(phy->phy.edev, EXTCON_USB) > 0, NULL);
+	} else {
+		/* Unchanged data-only path on F50/V50 and other battery-less boards. */
+		sc27xx_dpdm_switch_to_phy(phy->pmic, true);
+	}
+
+	/* the DP side: its failure leaves USB as it is */
+	phy->dp_phy = devm_phy_create(dev, NULL, &sprd_ssphy_dp_ops);
+	if (IS_ERR(phy->dp_phy)) {
+		dev_err(dev, "no DP PHY: %ld\n", PTR_ERR(phy->dp_phy));
+		phy->dp_phy = NULL;
+	} else {
+		phy_set_drvdata(phy->dp_phy, phy);
+		phy->dp_phy->attrs.bus_width = 2;	/* TCA mux 3: USB3 + 2-lane DP */
+		phy->dp_phy->attrs.max_link_rate = 5400;
+		phy->dp_phy->attrs.mode = PHY_MODE_DP;
+	}
+	dev_info(dev, "UMS9620 USB 3.1 PHY registered%s\n", phy->dp_phy ? " (with DP)" : "");
 	return 0;
+}
+
+static void sprd_ssphy_bc12_stop(struct sprd_ssphy *phy)
+{
+	unsigned long flags;
+
+	if (phy->bc12_enabled) {
+		spin_lock_irqsave(&phy->bc12_event_lock, flags);
+		WRITE_ONCE(phy->bc12_stopping, true);
+		spin_unlock_irqrestore(&phy->bc12_event_lock, flags);
+		devm_extcon_unregister_notifier(phy->dev, phy->phy.edev,
+					       EXTCON_USB, &phy->phy.vbus_nb);
+		cancel_delayed_work_sync(&phy->bc12_work);
+		cancel_work_sync(&phy->phy.chg_work);
+		regmap_update_bits(phy->pmic, UMP9620_BC12_CTRL2, BIT(0), 0);
+		sc27xx_dpdm_switch_to_phy(phy->pmic, false);
+	}
+}
+
+static void sprd_ssphy_shutdown_device(struct platform_device *pdev)
+{
+	sprd_ssphy_bc12_stop(platform_get_drvdata(pdev));
 }
 
 static void sprd_ssphy_remove(struct platform_device *pdev)
 {
 	struct sprd_ssphy *phy = platform_get_drvdata(pdev);
 
+	sprd_ssphy_bc12_stop(phy);
 	usb_remove_phy(&phy->phy);
 }
 
@@ -834,6 +1252,7 @@ MODULE_DEVICE_TABLE(of, sprd_ssphy_match);
 static struct platform_driver sprd_ssphy_driver = {
 	.probe = sprd_ssphy_probe,
 	.remove = sprd_ssphy_remove,
+	.shutdown = sprd_ssphy_shutdown_device,
 	.driver = { .name = "sprd-ssphy", .of_match_table = sprd_ssphy_match },
 };
 module_platform_driver(sprd_ssphy_driver);

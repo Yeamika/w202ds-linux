@@ -24,6 +24,9 @@ SOURCES*.json
 /Devices/modem/userspace/server-runtime-20261103-v5/
 /Devices/modem/userspace/output/
 
+# Publish USB-C single-cable userspace configuration.
+!/Devices/usb3/userspace/
+
 # Publish the GPU implementation already verified on W202DS.
 /Devices/gpu/source/*
 !/Devices/gpu/source/panfrost/

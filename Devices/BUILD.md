@@ -36,3 +36,5 @@ make -C Devices \
 只有 DTSI 的硬件目录暂不注册空模块目标，构建进度以各目录 README 为准。
 
 `w202ds-drm-handoff` 独立构建可选 `pj4edk2-handoff.ko`，不依赖 DRM 构建目标。
+
+`w202ds-usb3-dp` 构建 USB-C 外接显示 `w202_dp.ko`，需要内核按 `config/fragments/usb-single-cable.config` 构建 `Image modules`（dw-dp、ssphy DP 导出由全局 `Module.symvers` 提供）；不在 `all` 中，需显式指定。
