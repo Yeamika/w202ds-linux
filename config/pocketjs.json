@@ -1,0 +1,43 @@
+{
+  "mode": "uefi-loader",
+  "version": "REIMUKS-UEFI",
+  "viewport": [
+    1920,
+    1200
+  ],
+  "display_id": "gop-main",
+  "timeout_seconds": 0,
+  "default_entry_id": "android",
+  "entries": [
+    {
+      "id": "android",
+      "name": "android",
+      "path": "\\EFI\\Android\\bootaa64.efi",
+      "icon": "system",
+      "parameters": {}
+    },
+    {
+      "id": "debian-server",
+      "name": "DebianServer",
+      "path": "\\EFI\\DebianServer\\bootaa64.efi",
+      "icon": "system",
+      "parameters": {}
+    },
+    {
+      "id": "debian-kde",
+      "name": "DebianKDE",
+      "path": "\\EFI\\DebianKDE\\bootaa64.efi",
+      "icon": "system",
+      "parameters": {}
+    },
+    {
+      "id": "touch-test",
+      "name": "UEFITEST-Touch",
+      "path": "fv:31f7ea83-e392-48da-a1f7-f01aad25b17d",
+      "icon": "system",
+      "parameters": {}
+    }
+  ],
+  "battery_percent": null,
+  "external_power": null
+}
