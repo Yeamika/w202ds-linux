@@ -1,0 +1,11 @@
+[Unit]
+Description=W200DS power key: short press screen off/on, long press power menu
+After=systemd-logind.service
+
+[Service]
+ExecStart=/usr/local/sbin/w202-power-key
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

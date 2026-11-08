@@ -1,0 +1,8 @@
+{
+  "uuid": "w202-power-menu@w202ds",
+  "name": "W202DS Power Menu",
+  "description": "Power Off, Restart and Suspend chooser opened by holding the power key (w202-power-key).",
+  "shell-version": ["48"],
+  "session-modes": ["user", "unlock-dialog"],
+  "gettext-domain": "w202-power-menu"
+}

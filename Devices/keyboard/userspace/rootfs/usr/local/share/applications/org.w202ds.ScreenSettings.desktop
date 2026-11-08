@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Screen and Lock
+Name[zh_CN]=屏幕与锁屏
+Comment=Screen off timeout, lock delay and idle suspend
+Comment[zh_CN]=自动息屏、锁屏密码时间与自动挂起
+Exec=/usr/local/bin/w202-screen-settings
+Icon=org.gnome.Settings
+Categories=GTK;Settings;DesktopSettings;
+Keywords=lock;screen;password;timeout;锁屏;息屏;密码;
+StartupNotify=true

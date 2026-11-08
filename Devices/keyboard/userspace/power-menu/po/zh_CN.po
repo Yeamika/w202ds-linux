@@ -1,0 +1,16 @@
+# Simplified Chinese translation of the W202DS power menu.
+# Labels without an entry here come from gnome-shell's own catalog.
+msgid ""
+msgstr ""
+"Project-Id-Version: w202-power-menu\n"
+"PO-Revision-Date: 2026-11-08 00:00+0800\n"
+"Last-Translator: GeekerCloud-official\n"
+"Language-Team: Chinese (China)\n"
+"Language: zh_CN\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+#: extension.js
+msgid "Unlock to power off or restart"
+msgstr "解锁后才能关机或重启"

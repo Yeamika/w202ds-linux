@@ -1,0 +1,7 @@
+{
+  "uuid": "w202-screen-lock@w202ds",
+  "name": "W202DS Screen Lock",
+  "description": "Phone-style screen off and on: no lock screen while going dark, swipe up to return within the lock delay, password after it.",
+  "shell-version": ["48"],
+  "session-modes": ["user", "unlock-dialog"]
+}

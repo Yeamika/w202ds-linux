@@ -34,6 +34,10 @@ SOURCES*.json
 !/Devices/wcn/userspace/
 /Devices/wcn/userspace/output/
 
+# Publish the power key userspace (daemon, GNOME Shell power menu); keep build output local.
+!/Devices/keyboard/userspace/
+/Devices/keyboard/userspace/output/
+
 # Publish the GPU implementation already verified on W202DS.
 /Devices/gpu/source/*
 !/Devices/gpu/source/panfrost/

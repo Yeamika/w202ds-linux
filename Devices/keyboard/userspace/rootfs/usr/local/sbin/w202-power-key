@@ -1,0 +1,196 @@
+#!/usr/bin/python3
+"""W200DS power key: a short press turns the screen off (locking as GNOME is set to) or back on, a press held for
+LONG_PRESS seconds opens the power menu (Power Off / Restart / Suspend / Cancel).
+
+GNOME's own power-button action is 'nothing' (dconf 60-w202-power-key) and logind ignores the key
+(logind.conf.d/50-w202-power-key.conf), so this is its only handler. It reads the gpio-keys device without grabbing
+it, chooses between off and on from the outputs' DPMS state when the key goes down, and acts in the active graphical
+session through GNOME Shell's and Mutter's D-Bus interfaces. Screen off and on go through the GNOME Shell extension
+w202-screen-lock@w202ds (no lock screen while going dark, lock screen on wake, password after the lock delay);
+without it the shield is raised and lowered through org.gnome.ScreenSaver as before. The power menu is the extension
+w202-power-menu@w202ds; without it (no graphical session, extension not running) a long press suspends as before.
+Each action is logged to the journal.
+
+The press that wakes the system is left to GNOME, which lights the screen on resume by itself: a press is that one
+when the system slept since the last observation of the sleep time. Observations are taken at each press and at each
+logind PrepareForSleep signal, so after a resume from another wakeup source (an RTC alarm, the modem) the next press
+acts normally. The wake press is queued before user space thaws, so it is read before logind's signal for the same
+resume.
+
+`w202-power-key --test-long-press` runs the long-press action once, as if the key had just been held, and exits.
+"""
+import glob
+import os
+import pwd
+import select
+import struct
+import subprocess
+import sys
+import time
+
+DEV = "/dev/input/by-path/platform-gpio-keys-event"
+EV_KEY, KEY_POWER = 1, 116
+LONG_PRESS = 1.0  # s held to open the power menu
+EVENT = struct.Struct("llHHi")  # struct input_event on arm64
+MUTTER = ["org.gnome.Mutter.DisplayConfig", "/org/gnome/Mutter/DisplayConfig", "org.gnome.Mutter.DisplayConfig"]
+SCREENSAVER = ["gdbus", "call", "--session", "--dest", "org.gnome.ScreenSaver",
+               "--object-path", "/org/gnome/ScreenSaver", "--method"]
+POWER_MENU = ["gdbus", "call", "--session", "--dest", "org.gnome.Shell",
+              "--object-path", "/io/github/w202/PowerMenu", "--method", "io.github.w202.PowerMenu.Open"]
+SCREEN_LOCK = ["gdbus", "call", "--session", "--dest", "org.gnome.Shell",
+               "--object-path", "/io/github/w202/ScreenLock", "--method"]
+
+
+def log(msg):
+    print(msg, flush=True)
+
+
+def session_uid():
+    """uid of the active graphical session on seat0, or None."""
+    out = subprocess.run(["loginctl", "list-sessions", "--no-legend"], capture_output=True, text=True).stdout
+    for line in out.splitlines():
+        sid = line.split()[0]
+        props = subprocess.run(["loginctl", "show-session", sid, "-p", "Active", "-p", "Type", "-p", "User",
+                                "-p", "Seat"], capture_output=True, text=True).stdout
+        p = dict(kv.split("=", 1) for kv in props.split() if "=" in kv)
+        if p.get("Active") == "yes" and p.get("Seat") == "seat0" and p.get("Type") in ("wayland", "x11"):
+            return int(p["User"])
+    return None
+
+
+def user_bus(args):
+    """Run a busctl/gdbus command on the session bus of the active graphical user; stdout or None."""
+    uid = session_uid()
+    if uid is None:
+        return None
+    gid = pwd.getpwuid(uid).pw_gid
+    env = {"PATH": "/usr/bin:/bin", "DBUS_SESSION_BUS_ADDRESS": f"unix:path=/run/user/{uid}/bus"}
+    # setpriv, unlike runuser, opens no PAM session, so the calls leave nothing in the journal
+    r = subprocess.run(["setpriv", f"--reuid={uid}", f"--regid={gid}", "--init-groups"] + args,
+                       env=env, capture_output=True, text=True, timeout=10)
+    if r.returncode != 0 and r.stderr:
+        log(f"{args[0]}: {r.stderr.strip()}")
+    return r.stdout if r.returncode == 0 else None
+
+
+def displays_lit():
+    """Whether any connected output is lit, from the kernel's DPMS state: GNOME has not reacted to a key yet when
+    this is read at key-down, so it tells whether the press found the screen on or off."""
+    for c in glob.glob("/sys/class/drm/card*-*"):
+        try:
+            with open(c + "/status") as f:
+                status = f.read().strip()
+            with open(c + "/dpms") as f:
+                dpms = f.read().strip()
+        except OSError:
+            continue
+        if status == "connected" and dpms == "On":
+            return True
+    return False
+
+
+def screen_off():
+    if user_bus(SCREEN_LOCK + ["io.github.w202.ScreenLock.ScreenOff"]) is not None:
+        return
+    active = user_bus(SCREENSAVER + ["org.gnome.ScreenSaver.GetActive"])
+    if active is None:
+        return
+    if "true" not in active:
+        # Raising the shield (locking as configured) makes GNOME blank the outputs itself once it is shown
+        user_bus(SCREENSAVER + ["org.gnome.ScreenSaver.SetActive", "true"])
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            time.sleep(0.05)
+            if not displays_lit():
+                return
+    # the shield was already up (GNOME then does not blank on its own), or it did not blank in time
+    user_bus(["busctl", "--user", "set-property"] + MUTTER + ["PowerSaveMode", "i", "3"])
+
+
+def screen_on():
+    if user_bus(SCREEN_LOCK + ["io.github.w202.ScreenLock.ScreenOn"]) is not None:
+        return
+    user_bus(["busctl", "--user", "set-property"] + MUTTER + ["PowerSaveMode", "i", "0"])
+
+
+def long_press(lit):
+    """The key is held: light the screen if the press found it off and open the power menu in the session; without a
+    session or the menu extension, suspend."""
+    if not lit:
+        screen_on()
+    if user_bus(POWER_MENU) is not None:
+        log("long press: power menu")
+        return
+    log("long press: power menu unavailable, suspend")
+    subprocess.run(["systemctl", "suspend"])
+
+
+def sleep_gap():
+    """Seconds spent suspended since boot: CLOCK_BOOTTIME counts suspend, CLOCK_MONOTONIC does not."""
+    return time.clock_gettime(time.CLOCK_BOOTTIME) - time.monotonic()
+
+
+def sleep_monitor():
+    """logind's PrepareForSleep signals (before suspend and after resume), as a pipe of gdbus monitor lines."""
+    return subprocess.Popen(["gdbus", "monitor", "--system", "--dest", "org.freedesktop.login1",
+                             "--object-path", "/org/freedesktop/login1"],
+                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+
+
+def main():
+    fd = os.open(DEV, os.O_RDONLY)
+    mon = sleep_monitor()
+    down_at = None      # monotonic time of the current press
+    lit = True          # outputs were lit when the current press began
+    ignore = False      # this press woke the system, or already acted as a long press
+    gap = sleep_gap()   # observed at each press and each PrepareForSleep signal
+    while True:
+        timeout = None
+        if down_at is not None and not ignore:
+            timeout = max(0.0, down_at + LONG_PRESS - time.monotonic())
+        ready = select.select([fd, mon.stdout], [], [], timeout)[0]
+        if not ready:
+            ignore = True   # still held: long press now; its release is not a short press
+            long_press(lit)
+            continue
+        if mon.stdout in ready and fd not in ready:
+            # key events first: a wake press must still be compared with the sleep time from before the suspend
+            chunk = os.read(mon.stdout.fileno(), 4096)
+            if not chunk:   # gdbus went away: start it again
+                mon.wait()
+                time.sleep(1)
+                mon = sleep_monitor()
+            elif b"PrepareForSleep" in chunk:
+                gap = sleep_gap()
+            continue
+        data = os.read(fd, EVENT.size * 64)
+        for i in range(0, len(data) - EVENT.size + 1, EVENT.size):
+            _, _, etype, code, value = EVENT.unpack_from(data, i)
+            if etype != EV_KEY or code != KEY_POWER or value == 2:
+                continue
+            if value == 1:
+                lit = displays_lit()
+                g = sleep_gap()
+                # the key that woke the system arrives after resume: GNOME turns the screen on by itself
+                ignore = g - gap > 0.5
+                gap = g
+                down_at = time.monotonic()
+                if ignore:
+                    log("press woke the system")
+            else:
+                if down_at is not None and not ignore:
+                    if lit:
+                        log("short press: screen off")
+                        screen_off()
+                    else:
+                        log("short press: screen on")
+                        screen_on()
+                down_at = None
+                ignore = False
+                # no new sleep baseline here: after a long press this release may only arrive after resume
+
+
+if sys.argv[1:] == ["--test-long-press"]:
+    long_press(displays_lit())
+else:
+    main()

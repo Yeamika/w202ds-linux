@@ -1,0 +1,93 @@
+#!/usr/bin/python3
+# SPDX-License-Identifier: MIT
+"""W202DS screen and lock settings: when the screen turns off, when a password is needed again, idle suspend.
+
+Every row edits a standard GNOME setting of the current user, applied at once like GNOME Settings does:
+org.gnome.desktop.session idle-delay, org.gnome.desktop.screensaver lock-enabled / lock-delay,
+org.gnome.desktop.notifications show-in-lock-screen and org.gnome.settings-daemon.plugins.power
+sleep-inactive-battery-*. The extension w202-screen-lock@w202ds applies lock-delay to power-key screen off too.
+"""
+import sys
+
+import gi
+
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+from gi.repository import Adw, Gio, Gtk  # noqa: E402
+
+IDLE = [(30, "30 秒"), (60, "1 分钟"), (120, "2 分钟"), (180, "3 分钟"), (300, "5 分钟"), (600, "10 分钟"),
+        (900, "15 分钟"), (0, "从不")]
+LOCK = [(0, "立即"), (60, "1 分钟后"), (300, "5 分钟后"), (900, "15 分钟后"), (1800, "30 分钟后"),
+        (3600, "1 小时后"), (None, "从不")]
+SUSPEND = [(900, "15 分钟"), (1800, "30 分钟"), (3600, "1 小时"), (None, "从不")]
+
+
+def combo(title, subtitle, options, current, on_change):
+    labels = [label for _, label in options]
+    values = [value for value, _ in options]
+    if current not in values:  # a value set elsewhere: show it rather than pretend
+        values.append(current)
+        labels.append(f"{current // 60} 分钟" if current and current % 60 == 0 else f"{current} 秒")
+    row = Adw.ComboRow(title=title, subtitle=subtitle, model=Gtk.StringList.new(labels))
+    row.set_selected(values.index(current))
+    row.connect("notify::selected", lambda r, _p: on_change(values[r.get_selected()]))
+    return row
+
+
+class Window(Adw.ApplicationWindow):
+    def __init__(self, app):
+        super().__init__(application=app, title="屏幕与锁屏", default_width=460, default_height=640)
+        self.session = Gio.Settings(schema_id="org.gnome.desktop.session")
+        self.saver = Gio.Settings(schema_id="org.gnome.desktop.screensaver")
+        self.notify = Gio.Settings(schema_id="org.gnome.desktop.notifications")
+        self.power = Gio.Settings(schema_id="org.gnome.settings-daemon.plugins.power")
+
+        view = Adw.ToolbarView()
+        view.add_top_bar(Adw.HeaderBar())
+        page = Adw.PreferencesPage()
+        view.set_content(page)
+        self.set_content(view)
+
+        screen = Adw.PreferencesGroup(title="息屏")
+        screen.add(combo("自动息屏", "无操作多久后关闭屏幕", IDLE, self.session.get_uint("idle-delay"),
+                         lambda v: self.session.set_uint("idle-delay", v)))
+        page.add(screen)
+
+        lock = Adw.PreferencesGroup(
+            title="锁屏",
+            description="息屏时不显示锁屏界面；点亮后显示时间，上划回到之前的界面。"
+                        "屏幕关闭超过下面的时间后，需要输入密码才能进入。")
+        current = self.saver.get_uint("lock-delay") if self.saver.get_boolean("lock-enabled") else None
+        lock.add(combo("需要密码", "从息屏开始计时，挂起的时间也计算在内", LOCK, current, self.set_lock))
+        notifications = Adw.SwitchRow(title="锁屏上显示通知")
+        self.notify.bind("show-in-lock-screen", notifications, "active", Gio.SettingsBindFlags.DEFAULT)
+        lock.add(notifications)
+        page.add(lock)
+
+        sleep = Adw.PreferencesGroup(
+            title="自动挂起",
+            description="接通电源时不会自动挂起：本机 Wi-Fi 固件在挂起后无法恢复。")
+        battery = (self.power.get_int("sleep-inactive-battery-timeout")
+                   if self.power.get_string("sleep-inactive-battery-type") == "suspend" else None)
+        sleep.add(combo("使用电池时", "无操作多久后挂起", SUSPEND, battery, self.set_suspend))
+        page.add(sleep)
+
+    def set_lock(self, value):
+        self.saver.set_boolean("lock-enabled", value is not None)
+        if value is not None:
+            self.saver.set_uint("lock-delay", value)
+
+    def set_suspend(self, value):
+        self.power.set_string("sleep-inactive-battery-type", "nothing" if value is None else "suspend")
+        if value is not None:
+            self.power.set_int("sleep-inactive-battery-timeout", value)
+
+
+def main():
+    app = Adw.Application(application_id="org.w202ds.ScreenSettings")
+    app.connect("activate", lambda a: (a.get_active_window() or Window(a)).present())
+    return app.run(sys.argv)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
