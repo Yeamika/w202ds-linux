@@ -48,6 +48,17 @@ python3 build.py --output /path/to/build/w202ds \
 格式。使用已有 `--rust-build` 或 `--runtime-build` 时也传入相同 UI，脚本会校验清单、JS 和字体
 哈希，最终 `manifest.json` 记录实际 UI 输入。UI 文件不会被改写。
 
+构建会从上游获取 `edk2-libc`、PocketJS、QuickJS-NG，默认使用 `pj4edk2/sources.lock.json`
+中的固定提交。可以重复传入 `--source-ref pocketjs=latest`、
+`--source-ref quickjs=完整提交或分支或标签`，以及 `--source-repo NAME=URL` 选择自己的 fork。
+`NAME` 支持 `edk2-libc`、`pocketjs`、`quickjs`。`--source-cache DIR` 可复用下载。
+所选源码会实际参与编译；最新版本的接口变化可能需要适配。
+
+每次构建先解析一次上游，将实际提交写入 `upstream.lock.json`，再传给各阶段。
+`--source-lock FILE` 可重放之前的清单；使用编译机产物时应指向该 Rust bundle 的
+`upstream.lock.json`，并一并传回 `Cargo.lock`。完整用法见
+[pj4edk2 上游源码说明](../pj4edk2/docs/upstream-sources.md)。
+
 已有编译机产物时，使用 `--rust-build /path/to/received/rust`，本地无需 Rust。已有完整组件时，使用 `--runtime-build /path/to/build/pocketjs` 和/或 `--platform-build /path/to/build/platform`；提供的组件必须来自匹配的源码、配置和工具链。`EDK_TOOLS_PATH` 可以指向已编译的 BaseTools。
 
 ## 产物

@@ -41,3 +41,23 @@
 | `resident/uboot-b-uefi.img` | 5242880 | `8f34b41deaa20141bd457c484458e73aa52e2839d519ed092142354882debbb6` |
 
 这是带集成测试标记的离线验证产物，未用于真机刷写。
+
+## 2026-11-08 上游源码选择组合验证
+
+通过新的上游选择入口，解析并固定 edk2-libc、PocketJS、QuickJS-NG 的实际提交，
+将同一份 `upstream.lock.json` 传给 Rust 与 C 构建阶段。
+本次使用三个默认固定提交及仓库自带 UI，复用已验证的 EDK II 平台构建。
+
+Rust 编译机从下载的 PocketJS 源码完成 ARM64 构建及运行时测试；传回后校验通过，
+使用下载的 edk2-libc、QuickJS 和选定 PocketJS guest 编译 C 组件。
+最终 FD、RAMBoot、LK 桥接、bootstrap 和完整容器均成功生成，
+各阶段记录的上游选择一致，实际 Cargo 锁与所有产物哈希通过核对。
+QuickJS 最新提交的下载和错误复用拒绝另已验证，完整固件兼容性仅验证默认固定版本。
+
+| 文件 | 字节数 | SHA-256 |
+| --- | ---: | --- |
+| `w202ds.fd` | 2097152 | `18a92a1f45085497832d82de1a22dcf21702c933bf44f9a2f85062635e6c755f` |
+| `ramboot.img` | 907264 | `6d8a7a89fb94d7d51b4108ad9e0b6781b80e47340b7920b65b6ad4ae42256174` |
+| `resident/uboot-b-uefi.img` | 5242880 | `fa6d7dffa4367b00632e117a95d29b436be738f52de7ca2e738c8b550845f04c` |
+
+本次未刷写、重启或新增真机验证；未重复运行桥接实现未改动的 ARM64 Unicorn 测试。

@@ -33,6 +33,11 @@ def main():
     p.add_argument('--edk2', type=Path, default=ROOT.parent/'edk2-ums9620', help='platform repository')
     p.add_argument('--pocketjs', type=Path, default=ROOT.parent/'pj4edk2', help='runtime repository')
     p.add_argument('--default-ui', type=Path, help='external pj4edk2 UI directory containing ui.json')
+    p.add_argument('--source-cache', type=Path, help='external upstream Git cache shared by build stages')
+    p.add_argument('--source-lock', type=Path, help='resolved upstream.lock.json to replay')
+    p.add_argument('--source-repo', action='append', default=[], metavar='NAME=URL')
+    p.add_argument('--source-ref', action='append', default=[], metavar='NAME=REV',
+                   help='edk2-libc, pocketjs or quickjs: commit, branch, tag or latest')
     p.add_argument('--output', type=Path, required=True, help='fresh directory outside all source trees')
     p.add_argument('--lk-baseline', type=Path, required=True)
     p.add_argument('--settings-image', type=Path, required=True)
@@ -44,7 +49,7 @@ def main():
     p.add_argument('--revision', default='w202ds-edk2-split')
     a = p.parse_args()
     for name in ('edk2', 'pocketjs', 'output', 'lk_baseline', 'settings_image', 'touch_firmware',
-                 'rust_build', 'runtime_build', 'platform_build', 'default_ui'):
+                 'rust_build', 'runtime_build', 'platform_build', 'default_ui', 'source_cache', 'source_lock'):
         value = getattr(a, name)
         if value is not None:
             setattr(a, name, value.resolve())
@@ -60,7 +65,6 @@ def main():
     a.default_ui = (a.default_ui or Path(os.environ.get('PJB_DEFAULT_UI') or a.pocketjs/'default-ui')).resolve()
     if a.output == a.default_ui or a.default_ui in a.output.parents:
         p.error('--output must be outside the UI directory')
-    runtime_inputs = runtime_api['identity'](a.pocketjs, a.default_ui)
     lock = json.loads((ROOT/'inputs.lock.json').read_text())
     for name in ('lk_baseline', 'touch_firmware'):
         file, expected = getattr(a, name), lock[name]
@@ -81,6 +85,22 @@ def main():
         if r.returncode:
             raise SystemExit(f'{label} failed ({r.returncode}); see {logs/(label+".log")}')
 
+    source_lock = a.output/'upstream.lock.json'
+    source_cache = (a.source_cache or Path(env.get('PJB_SOURCE_CACHE') or a.output/'source-cache')).resolve()
+    for source in (ROOT, a.edk2, a.pocketjs, a.default_ui):
+        if source_cache == source or source in source_cache.parents:
+            p.error('--source-cache must be outside source and UI directories')
+    argv = [sys.executable, a.pocketjs/'tools/upstream.py', 'resolve',
+            '--output', source_lock, '--source-cache', source_cache]
+    if a.source_lock:
+        argv.extend(['--source-lock', a.source_lock])
+    for option, values in [('--source-repo', a.source_repo), ('--source-ref', a.source_ref)]:
+        for value in values:
+            argv.extend([option, value])
+    run('upstream', *argv)
+    upstream_sources = json.loads(source_lock.read_text())
+    runtime_inputs = runtime_api['identity'](a.pocketjs, a.default_ui, source_lock)
+
     tools = env.get('EDK_TOOLS_PATH')
     if tools:
         tools = Path(tools).resolve()
@@ -92,6 +112,7 @@ def main():
     if not a.runtime_build:
         argv = ['bash', a.pocketjs/'build.sh', '--edk2', a.edk2/'edk2', '--output', runtime]
         argv.extend(['--default-ui', a.default_ui])
+        argv.extend(['--source-lock', source_lock, '--source-cache', source_cache])
         if a.rust_build:
             argv.extend(['--rust-build', a.rust_build])
         run('pocketjs', *argv)
@@ -99,10 +120,12 @@ def main():
     runtime_identity = json.loads((runtime/'runtime-build.json').read_text())
     if (any(runtime_identity.get(key) != value for key, value in runtime_inputs.items())
             or runtime_identity['archive_sha256'] != sha(runtime/'PocketJS.a')
-            or runtime_identity['abi_manifest_sha256'] != sha(support/'manifest.json')):
+            or runtime_identity['abi_manifest_sha256'] != sha(support/'manifest.json')
+            or runtime_identity.get('cargo_lock_sha256') != sha(runtime/'Cargo.lock')):
         raise SystemExit('Runtime build differs from its current sources, selected UI or recorded artifacts')
     support_manifest = json.loads((support/'manifest.json').read_text())
-    pins = json.loads((a.pocketjs/'sources.lock.json').read_text())['dependencies']
+    pins = dict(json.loads((a.pocketjs/'sources.lock.json').read_text())['dependencies'],
+                **upstream_sources['dependencies'])
     for name in ('edk2', 'edk2-libc'):
         key = 'libc' if name == 'edk2-libc' else name
         if support_manifest[key] != pins[name]['commit']:
@@ -152,6 +175,7 @@ def main():
                 'inputs': {name: {'bytes': getattr(a, name).stat().st_size, 'sha256': sha(getattr(a, name))}
                            for name in ('lk_baseline', 'settings_image', 'touch_firmware')},
                 'runtime_sha256': sha(runtime/'PocketJS.a'),
+                'upstream_sources': upstream_sources,
                 'default_ui': runtime_inputs['default_ui'],
                 'artifacts': {str(f.relative_to(a.output)): {'bytes': f.stat().st_size, 'sha256': sha(f)} for f in artifacts}}
     (a.output/'manifest.json').write_text(json.dumps(manifest, indent=2)+'\n')
