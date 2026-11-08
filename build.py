@@ -11,6 +11,7 @@ import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parent
+RUNTIME_SOURCES = ('edk2-libc', 'pocketjs', 'quickjs')
 
 
 def sha(path):
@@ -35,6 +36,31 @@ def verify_abi_sources(support, upstream, platform_edk2):
         raise SystemExit('Runtime ABI support edk2-libc differs from the selected upstream')
 
 
+def route_source_options(values, platform_names):
+    platform, runtime = [], []
+    for value in values:
+        name, separator, _ = value.partition('=')
+        if separator and name in (*platform_names, 'brotli'):
+            platform.append(value)
+        elif separator and name in RUNTIME_SOURCES:
+            runtime.append(value)
+        else:
+            raise ValueError(f'Unknown upstream source selection: {value}')
+    return platform, runtime
+
+
+def verify_platform_sources(platform, expected):
+    if platform['edk2'] != expected['dependencies']['edk2']['commit']:
+        raise SystemExit('Platform build EDK II differs from the selected upstream')
+    actual = platform.get('upstream_sources', {}).get('dependencies')
+    for name, entry in expected['dependencies'].items():
+        if actual:
+            if any(actual[name][key] != entry[key] for key in ('repository', 'commit')):
+                raise SystemExit(f'Platform build upstream differs: {name}')
+        elif name != 'edk2' and entry['commit'] != entry['gitlink']:
+            raise SystemExit('Legacy platform manifest cannot verify overridden Brotli sources; rebuild the platform')
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--edk2', type=Path, default=ROOT.parent/'edk2-ums9620', help='platform repository')
@@ -44,7 +70,7 @@ def main():
     p.add_argument('--source-lock', type=Path, help='resolved upstream.lock.json to replay')
     p.add_argument('--source-repo', action='append', default=[], metavar='NAME=URL')
     p.add_argument('--source-ref', action='append', default=[], metavar='NAME=REV',
-                   help='edk2-libc, pocketjs or quickjs: commit, branch, tag or latest')
+                   help='edk2, brotli, edk2-libc, pocketjs or quickjs: commit, branch, tag or latest')
     p.add_argument('--output', type=Path, required=True, help='fresh directory outside all source trees')
     p.add_argument('--lk-baseline', type=Path, required=True)
     p.add_argument('--settings-image', type=Path, required=True)
@@ -68,6 +94,9 @@ def main():
     if a.output.exists():
         p.error('output exists; choose a fresh directory')
     runtime_api = runpy.run_path(str(a.pocketjs/'tools/rust-bundle.py'))
+    platform_api = runpy.run_path(str(a.edk2/'tools/upstream.py'))
+    platform_repos, runtime_repos = route_source_options(a.source_repo, platform_api['NAMES'])
+    platform_refs, runtime_refs = route_source_options(a.source_ref, platform_api['NAMES'])
     # Resolve the same default as build.sh, including direct Cargo integration.
     a.default_ui = (a.default_ui or Path(os.environ.get('PJB_DEFAULT_UI') or a.pocketjs/'default-ui')).resolve()
     if a.output == a.default_ui or a.default_ui in a.output.parents:
@@ -97,15 +126,33 @@ def main():
     for source in (ROOT, a.edk2, a.pocketjs, a.default_ui):
         if source_cache == source or source in source_cache.parents:
             p.error('--source-cache must be outside source and UI directories')
-    argv = [sys.executable, a.pocketjs/'tools/upstream.py', 'resolve',
-            '--output', source_lock, '--source-cache', source_cache, '--edk2', a.edk2/'edk2']
+    platform_sources = a.output/'platform-sources'
+    argv = [sys.executable, a.edk2/'tools/upstream.py', 'prepare',
+            '--output', platform_sources, '--source-cache', source_cache]
     if a.source_lock:
         argv.extend(['--source-lock', a.source_lock])
-    for option, values in [('--source-repo', a.source_repo), ('--source-ref', a.source_ref)]:
+    for option, values in [('--source-repo', platform_repos), ('--source-ref', platform_refs)]:
+        for value in values:
+            argv.extend([option, value])
+    run('platform-upstream', *argv)
+    platform_upstream = json.loads((platform_sources/'upstream.lock.json').read_text())
+    edk2_source = Path(json.loads((platform_sources/'source-paths.json').read_text())['edk2'])
+    selections = json.loads((a.pocketjs/'sources.lock.json').read_text())
+    if a.source_lock:
+        selections['dependencies'].update(json.loads(a.source_lock.read_text())['dependencies'])
+    selections['dependencies'].update(platform_upstream['dependencies'])
+    combined_inputs = a.output/'source-inputs.lock.json'
+    combined_inputs.write_text(json.dumps(selections, indent=2)+'\n')
+    argv = [sys.executable, a.pocketjs/'tools/upstream.py', 'resolve',
+            '--output', source_lock, '--source-cache', source_cache, '--edk2', edk2_source,
+            '--source-lock', combined_inputs]
+    for option, values in [('--source-repo', runtime_repos), ('--source-ref', runtime_refs)]:
         for value in values:
             argv.extend([option, value])
     run('upstream', *argv)
     upstream_sources = json.loads(source_lock.read_text())
+    upstream_sources['dependencies'].update(platform_upstream['dependencies'])
+    source_lock.write_text(json.dumps(upstream_sources, indent=2)+'\n')
     runtime_inputs = runtime_api['identity'](a.pocketjs, a.default_ui, source_lock)
 
     tools = env.get('EDK_TOOLS_PATH')
@@ -113,11 +160,11 @@ def main():
         tools = Path(tools).resolve()
     else:
         tools = a.output/'basetools'
-        run('basetools', 'bash', a.edk2/'build-tools.sh', tools)
+        run('basetools', 'bash', a.edk2/'build-tools.sh', '--output', tools, '--edk2', edk2_source)
     env['EDK_TOOLS_PATH'] = str(tools)
     runtime = a.runtime_build or a.output/'pocketjs'
     if not a.runtime_build:
-        argv = ['bash', a.pocketjs/'build.sh', '--edk2', a.edk2/'edk2', '--output', runtime]
+        argv = ['bash', a.pocketjs/'build.sh', '--edk2', edk2_source, '--output', runtime]
         argv.extend(['--default-ui', a.default_ui])
         argv.extend(['--source-lock', source_lock, '--source-cache', source_cache])
         if a.rust_build:
@@ -141,12 +188,14 @@ def main():
                W202_ANDROID_BOOT_ENTER='FALSE', W202_LK_RETURN_TEST='FALSE', W202_LK_RETURN_PROBE_ONLY='FALSE')
     if not a.platform_build:
         run('platform', 'bash', a.edk2/'build.sh', '--output', platform,
-            '--abi-include', a.pocketjs/'pocketjsforedk2/include', '--touch-firmware', a.touch_firmware)
+            '--edk2', edk2_source, '--abi-include', a.pocketjs/'pocketjsforedk2/include',
+            '--touch-firmware', a.touch_firmware)
     run('verify-platform', sys.executable, a.edk2/'tools/platform-manifest.py', 'verify',
         '--build', platform, '--abi-include', a.pocketjs/'pocketjsforedk2/include',
         '--touch-firmware', a.touch_firmware)
-    verify_abi_sources(support_manifest, upstream_sources,
-                       json.loads((platform/'platform-build.json').read_text())['edk2'])
+    platform_manifest = json.loads((platform/'platform-build.json').read_text())
+    verify_platform_sources(platform_manifest, platform_upstream)
+    verify_abi_sources(support_manifest, upstream_sources, platform_manifest['edk2'])
     build = platform/'workspace/Build/Ums9620/RELEASE_GCC5'
     sdk = a.output/'link-sdk'
     run('export-sdk', sys.executable, ROOT/'tools/edk2_sdk.py', 'export', '--board', 'w202ds',
@@ -189,4 +238,7 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except ValueError as error:
+        raise SystemExit(str(error)) from error

@@ -33,7 +33,7 @@ flowchart LR
 
 ## 完整构建
 
-三个仓库可并排放置，也可以通过参数指定位置。需要 Bash、Python 3.11+、GNU make、GCC/G++、UUID 开发头文件、AArch64 GNU GCC/binutils，以及 `pj4edk2` 声明的 Rust 工具链。子模块初始化和依赖版本见另外两个仓库的 README。
+三个仓库可并排放置，也可以通过参数指定位置。需要 Bash、Python 3.11+、GNU make、GCC/G++、UUID 开发头文件、AArch64 GNU GCC/binutils，以及 `pj4edk2` 声明的 Rust 工具链。两个组件仓库各自获取上游依赖，版本见各自 README，无需先初始化 EDK II 子模块。
 
 ```sh
 python3 build.py --output /path/to/build/w202ds \
@@ -48,15 +48,18 @@ python3 build.py --output /path/to/build/w202ds \
 格式。使用已有 `--rust-build` 或 `--runtime-build` 时也传入相同 UI，脚本会校验清单、JS 和字体
 哈希，最终 `manifest.json` 记录实际 UI 输入。UI 文件不会被改写。
 
-构建会从上游获取 `edk2-libc`、PocketJS、QuickJS-NG，默认使用 `pj4edk2/sources.lock.json`
-中的固定提交。可以重复传入 `--source-ref pocketjs=latest`、
+构建会通过 `edk2-ums9620` 获取 EDK II 和两份 Brotli，通过 `pj4edk2` 获取
+`edk2-libc`、PocketJS、QuickJS-NG，默认使用两个项目各自声明的固定提交。
+可以重复传入 `--source-ref edk2=指定提交`、`--source-ref pocketjs=latest`、
 `--source-ref quickjs=完整提交或分支或标签`，以及 `--source-repo NAME=URL` 选择自己的 fork。
-`NAME` 支持 `edk2-libc`、`pocketjs`、`quickjs`。`--source-cache DIR` 可复用下载。
+`NAME` 支持 `edk2`、`brotli`、`edk2-libc`、`pocketjs`、`quickjs`，
+也支持平台清单中的两个完整 Brotli 子模块路径。`--source-cache DIR` 可复用下载。
 所选源码会实际参与编译；最新版本的接口变化可能需要适配。
 
 `pj4edk2` 可独立使用通用 EDK II。本组合工程通过 `--edk2` 向它传入 W202DS
 平台实际使用的 EDK II checkout，并核对运行时 ABI 库、平台源码和 `platform-build.json`
-中的 EDK II 提交一致；不要求等于 `pj4edk2` 自己的默认提交。平台版本选择和兼容性检查属于本工程。
+中的 EDK II 提交一致；平台清单还核对两个 Brotli 的实际仓库和提交。
+平台版本选择和兼容性检查属于本工程。
 
 每次构建先解析一次上游，将实际提交写入 `upstream.lock.json`，再传给各阶段。
 `--source-lock FILE` 可重放之前的清单；使用编译机产物时应指向该 Rust bundle 的
