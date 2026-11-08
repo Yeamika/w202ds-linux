@@ -4,12 +4,12 @@ W202DS 引导固件的组合层：保留当前使用的 LK 驻留/返回桥接�
 
 ## 四个仓库如何配合
 
-| 仓库 | 负责的功能 |
-| --- | --- |
-| `edk2-ums9620` | EDK II 核心、UMS9620 UEFI 驱动、LK 交接接口、Android/Linux EFI 加载器 |
-| `pj4edk2` | 公共 ABI、PocketJS 引擎、UEFI 运行时、默认菜单/设置/恢复/充电页面 |
-| `w202ds-boot` | LK 桥接、板级菜单配置、最终链接、RAMBoot 包装、5 MiB LK 容器封装、ESP 加载器布局 |
-| `w202ds-linux` | Linux 内核、设备树、模块、硬件固件及 Linux 集成 |
+| 仓库           | 负责的功能                                                                       |
+| -------------- | -------------------------------------------------------------------------------- |
+| `edk2-ums9620` | EDK II 核心、UMS9620 UEFI 驱动、LK 交接接口、Android/Linux EFI 加载器            |
+| `pj4edk2`      | 公共 ABI、PocketJS 引擎、UEFI 运行时、默认菜单/设置/恢复/充电页面                |
+| `w202ds-boot`  | LK 桥接、板级菜单配置、最终链接、RAMBoot 包装、5 MiB LK 容器封装、ESP 加载器布局 |
+| `w202ds-linux` | Linux 内核、设备树、模块、硬件固件及 Linux 集成                                  |
 
 ```mermaid
 flowchart LR
@@ -54,6 +54,10 @@ python3 build.py --output /path/to/build/w202ds \
 `NAME` 支持 `edk2-libc`、`pocketjs`、`quickjs`。`--source-cache DIR` 可复用下载。
 所选源码会实际参与编译；最新版本的接口变化可能需要适配。
 
+`pj4edk2` 可独立使用通用 EDK II。本组合工程通过 `--edk2` 向它传入 W202DS
+平台实际使用的 EDK II checkout，并核对运行时 ABI 库、平台源码和 `platform-build.json`
+中的 EDK II 提交一致；不要求等于 `pj4edk2` 自己的默认提交。平台版本选择和兼容性检查属于本工程。
+
 每次构建先解析一次上游，将实际提交写入 `upstream.lock.json`，再传给各阶段。
 `--source-lock FILE` 可重放之前的清单；使用编译机产物时应指向该 Rust bundle 的
 `upstream.lock.json`，并一并传回 `Cargo.lock`。完整用法见
@@ -63,15 +67,15 @@ python3 build.py --output /path/to/build/w202ds \
 
 ## 产物
 
-| 输出 | 内容 |
-| --- | --- |
-| `w202ds.fd` | EDK II + PocketJS 最终固件卷，2 MiB |
-| `ramboot.img` | 带校验描述符的 Android RAMBoot 包装 |
-| `resident/uboot-b-uefi.img` | LK + 桥接 + RAMBoot，完整 5 MiB B 槽容器 |
-| `ESP/EFI/Android/bootaa64.efi` | 返回 LK 启动 Android |
-| `ESP/EFI/DebianServer/bootaa64.efi` | Server Linux 加载器 |
-| `ESP/EFI/DebianKDE/bootaa64.efi` | KDE Linux 加载器 |
-| `manifest.json`、`resident/manifest.json` | 输入与输出哈希、封装布局和验证状态 |
+| 输出                                      | 内容                                     |
+| ----------------------------------------- | ---------------------------------------- |
+| `w202ds.fd`                               | EDK II + PocketJS 最终固件卷，2 MiB      |
+| `ramboot.img`                             | 带校验描述符的 Android RAMBoot 包装      |
+| `resident/uboot-b-uefi.img`               | LK + 桥接 + RAMBoot，完整 5 MiB B 槽容器 |
+| `ESP/EFI/Android/bootaa64.efi`            | 返回 LK 启动 Android                     |
+| `ESP/EFI/DebianServer/bootaa64.efi`       | Server Linux 加载器                      |
+| `ESP/EFI/DebianKDE/bootaa64.efi`          | KDE Linux 加载器                         |
+| `manifest.json`、`resident/manifest.json` | 输入与输出哈希、封装布局和验证状态       |
 
 `ESP/` 是加载器增量目录；操作系统镜像和设备树仍由各系统提供，并不是一份完整 ESP 备份。构建入口只在主机生成文件。离线链接检查不能代替真机验证，迁移后的验证记录见 [VALIDATION.md](VALIDATION.md)。
 

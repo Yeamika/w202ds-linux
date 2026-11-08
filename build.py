@@ -28,6 +28,13 @@ def repository_identity(root):
                              if name and (root/name).is_file()}}
 
 
+def verify_abi_sources(support, upstream, platform_edk2):
+    if support['edk2'] != platform_edk2:
+        raise SystemExit('Runtime ABI support EDK II differs from the W202DS platform EDK II')
+    if support['libc'] != upstream['dependencies']['edk2-libc']['commit']:
+        raise SystemExit('Runtime ABI support edk2-libc differs from the selected upstream')
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--edk2', type=Path, default=ROOT.parent/'edk2-ums9620', help='platform repository')
@@ -91,7 +98,7 @@ def main():
         if source_cache == source or source in source_cache.parents:
             p.error('--source-cache must be outside source and UI directories')
     argv = [sys.executable, a.pocketjs/'tools/upstream.py', 'resolve',
-            '--output', source_lock, '--source-cache', source_cache]
+            '--output', source_lock, '--source-cache', source_cache, '--edk2', a.edk2/'edk2']
     if a.source_lock:
         argv.extend(['--source-lock', a.source_lock])
     for option, values in [('--source-repo', a.source_repo), ('--source-ref', a.source_ref)]:
@@ -124,12 +131,8 @@ def main():
             or runtime_identity.get('cargo_lock_sha256') != sha(runtime/'Cargo.lock')):
         raise SystemExit('Runtime build differs from its current sources, selected UI or recorded artifacts')
     support_manifest = json.loads((support/'manifest.json').read_text())
-    pins = dict(json.loads((a.pocketjs/'sources.lock.json').read_text())['dependencies'],
-                **upstream_sources['dependencies'])
-    for name in ('edk2', 'edk2-libc'):
-        key = 'libc' if name == 'edk2-libc' else name
-        if support_manifest[key] != pins[name]['commit']:
-            raise SystemExit(f'ABI support {name} pin differs')
+    verify_abi_sources(support_manifest, upstream_sources,
+                       upstream_sources['dependencies']['edk2']['commit'])
     if sha(runtime/'PocketJS.a') != support_manifest['runtime_sha256']:
         raise SystemExit('PocketJS.a differs from its ABI support manifest')
     platform = a.platform_build or a.output/'platform'
@@ -142,6 +145,8 @@ def main():
     run('verify-platform', sys.executable, a.edk2/'tools/platform-manifest.py', 'verify',
         '--build', platform, '--abi-include', a.pocketjs/'pocketjsforedk2/include',
         '--touch-firmware', a.touch_firmware)
+    verify_abi_sources(support_manifest, upstream_sources,
+                       json.loads((platform/'platform-build.json').read_text())['edk2'])
     build = platform/'workspace/Build/Ums9620/RELEASE_GCC5'
     sdk = a.output/'link-sdk'
     run('export-sdk', sys.executable, ROOT/'tools/edk2_sdk.py', 'export', '--board', 'w202ds',
