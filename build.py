@@ -32,6 +32,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--edk2', type=Path, default=ROOT.parent/'edk2-ums9620', help='platform repository')
     p.add_argument('--pocketjs', type=Path, default=ROOT.parent/'pj4edk2', help='runtime repository')
+    p.add_argument('--default-ui', type=Path, help='external pj4edk2 UI directory containing ui.json')
     p.add_argument('--output', type=Path, required=True, help='fresh directory outside all source trees')
     p.add_argument('--lk-baseline', type=Path, required=True)
     p.add_argument('--settings-image', type=Path, required=True)
@@ -43,7 +44,7 @@ def main():
     p.add_argument('--revision', default='w202ds-edk2-split')
     a = p.parse_args()
     for name in ('edk2', 'pocketjs', 'output', 'lk_baseline', 'settings_image', 'touch_firmware',
-                 'rust_build', 'runtime_build', 'platform_build'):
+                 'rust_build', 'runtime_build', 'platform_build', 'default_ui'):
         value = getattr(a, name)
         if value is not None:
             setattr(a, name, value.resolve())
@@ -54,6 +55,12 @@ def main():
             p.error('--output must be outside all three source repositories')
     if a.output.exists():
         p.error('output exists; choose a fresh directory')
+    runtime_api = runpy.run_path(str(a.pocketjs/'tools/rust-bundle.py'))
+    # Resolve the same default as build.sh, including direct Cargo integration.
+    a.default_ui = (a.default_ui or Path(os.environ.get('PJB_DEFAULT_UI') or a.pocketjs/'default-ui')).resolve()
+    if a.output == a.default_ui or a.default_ui in a.output.parents:
+        p.error('--output must be outside the UI directory')
+    runtime_inputs = runtime_api['identity'](a.pocketjs, a.default_ui)
     lock = json.loads((ROOT/'inputs.lock.json').read_text())
     for name in ('lk_baseline', 'touch_firmware'):
         file, expected = getattr(a, name), lock[name]
@@ -84,16 +91,16 @@ def main():
     runtime = a.runtime_build or a.output/'pocketjs'
     if not a.runtime_build:
         argv = ['bash', a.pocketjs/'build.sh', '--edk2', a.edk2/'edk2', '--output', runtime]
+        argv.extend(['--default-ui', a.default_ui])
         if a.rust_build:
             argv.extend(['--rust-build', a.rust_build])
         run('pocketjs', *argv)
     support = runtime/'abi-support'
     runtime_identity = json.loads((runtime/'runtime-build.json').read_text())
-    runtime_api = runpy.run_path(str(a.pocketjs/'tools/rust-bundle.py'))
-    if (runtime_identity['sources'] != runtime_api['sources'](a.pocketjs)
+    if (any(runtime_identity.get(key) != value for key, value in runtime_inputs.items())
             or runtime_identity['archive_sha256'] != sha(runtime/'PocketJS.a')
             or runtime_identity['abi_manifest_sha256'] != sha(support/'manifest.json')):
-        raise SystemExit('Runtime build differs from its current sources or recorded artifacts')
+        raise SystemExit('Runtime build differs from its current sources, selected UI or recorded artifacts')
     support_manifest = json.loads((support/'manifest.json').read_text())
     pins = json.loads((a.pocketjs/'sources.lock.json').read_text())['dependencies']
     for name in ('edk2', 'edk2-libc'):
@@ -145,6 +152,7 @@ def main():
                 'inputs': {name: {'bytes': getattr(a, name).stat().st_size, 'sha256': sha(getattr(a, name))}
                            for name in ('lk_baseline', 'settings_image', 'touch_firmware')},
                 'runtime_sha256': sha(runtime/'PocketJS.a'),
+                'default_ui': runtime_inputs['default_ui'],
                 'artifacts': {str(f.relative_to(a.output)): {'bytes': f.stat().st_size, 'sha256': sha(f)} for f in artifacts}}
     (a.output/'manifest.json').write_text(json.dumps(manifest, indent=2)+'\n')
     print(json.dumps({'manifest': str(a.output/'manifest.json'), 'revision': a.revision,

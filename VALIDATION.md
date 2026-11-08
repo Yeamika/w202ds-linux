@@ -25,3 +25,19 @@
 三个 ESP EFI 加载器也已构建并按菜单路径导出。完整输入、产物哈希及封装报告由构建输出的 `manifest.json`、`resident/manifest.json` 保留。
 
 完整 LK 底包仍是外部二进制输入；从完整 LK 源码重建该底包不在本次已验证范围内。本次没有刷写、重启设备或进行新固件真机验证。
+
+## 2026-11-08 外部 UI 组合验证
+
+通过 `--default-ui` 和 `--rust-build` 选择外部页面与 Rust 编译机产物，复用已验证的平台构建，重新编译完整 PocketJS UEFI 组件，完成最终链接、RAMBoot 和 LK 容器封装。外部 UI 路径含空格，与编译机上的绝对路径不同。
+
+实际生成的 `PocketJS.a` 包含外部 UI 独有标记，`runtime-build.json` 和最终 `manifest.json` 记录的 UI 输入一致。复用该运行时却选择仓库内默认 UI 时，在最终链接前被拒绝。
+
+针对本次产物的 ARM64 Unicorn 验证通过：4 项 resident 测试和 6 项返回测试。
+
+| 文件 | 字节数 | SHA-256 |
+| --- | ---: | --- |
+| `w202ds.fd` | 2097152 | `01b5b470df0994f0d20272c717bce657f9cc8a32f732ed19f81b5d68f9168d52` |
+| `ramboot.img` | 907264 | `60e2e82c8b5e40a77e2ace85decf302dfe5a82d742f4f5f6b33a271da923169f` |
+| `resident/uboot-b-uefi.img` | 5242880 | `8f34b41deaa20141bd457c484458e73aa52e2839d519ed092142354882debbb6` |
+
+这是带集成测试标记的离线验证产物，未用于真机刷写。

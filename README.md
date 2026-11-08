@@ -44,6 +44,10 @@ python3 build.py --output /path/to/build/w202ds \
 
 `--output` 必须是位于三个源码树外的新目录。`--edk2`、`--pocketjs` 可指定另外两个仓库；`--jobs` 控制并行度。构建先生成私有 BaseTools，再构建运行时、平台、最终 FD、桥接和 LK 容器，各阶段日志保存在输出的 `logs/`。
 
+使用外部默认 UI 时加 `--default-ui /path/to/my-project/ui`，此目录遵循 `pj4edk2` 的 `ui.json`
+格式。使用已有 `--rust-build` 或 `--runtime-build` 时也传入相同 UI，脚本会校验清单、JS 和字体
+哈希，最终 `manifest.json` 记录实际 UI 输入。UI 文件不会被改写。
+
 已有编译机产物时，使用 `--rust-build /path/to/received/rust`，本地无需 Rust。已有完整组件时，使用 `--runtime-build /path/to/build/pocketjs` 和/或 `--platform-build /path/to/build/platform`；提供的组件必须来自匹配的源码、配置和工具链。`EDK_TOOLS_PATH` 可以指向已编译的 BaseTools。
 
 ## 产物
