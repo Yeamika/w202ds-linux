@@ -34,6 +34,9 @@ SOURCES*.json
 !/Devices/wcn/userspace/
 /Devices/wcn/userspace/output/
 
+# Strict suspend wake udev policy.
+!/Devices/suspend/userspace/
+
 # Publish the GPU implementation already verified on W202DS.
 /Devices/gpu/source/*
 !/Devices/gpu/source/panfrost/

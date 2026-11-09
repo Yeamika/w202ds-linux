@@ -23,5 +23,6 @@
 | [视觉数字信号处理器](vdsp/README.md) | UMS9620 集成 VDSP | ❌ | 尚无可交付、经验证的独立运行功能。 |
 | [内置存储](storage/README.md) | eMMC（厂商 / 料号未确认）；UMS9620 SDHCI | ❓ | 当前配置启用 eMMC；独立读写与长期稳定性验收待补。 |
 | [温度监测与热管理](thermal/README.md) | UMS9620 温度传感器；UMP9622 tsensor / PMIC ADC | ❓ | 温度精度、校准、限频与过热告警尚未验收。 |
+| [系统挂起唤醒](suspend/README.md) | UMS9620 LP_AP_INTC、AP EIC / GPIO | 🟡 | deep 挂起只由电源键与 RTC 唤醒，RTC 30 / 60 / 90 秒满时长挂起及触摸不唤醒已验证；长时间耗电与联网挂起待验。 |
 
 更新日期：2026-11-06

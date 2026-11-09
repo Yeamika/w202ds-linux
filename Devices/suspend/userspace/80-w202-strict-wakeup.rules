@@ -1,0 +1,7 @@
+# W202DS strict suspend policy: only the power key and the RTC alarm wake the
+# tablet. Charger, fuel gauge, USB-C PD, Wi-Fi PCIe and IPA stay awake sources
+# while running but must not resume the system from suspend.
+ACTION=="add|change", SUBSYSTEM=="power_supply", KERNEL=="bq256xx-charger|sc27xx-fgu|tcpm-source-psy-*", TEST=="device/power/wakeup", ATTR{device/power/wakeup}="disabled"
+ACTION=="add|change", SUBSYSTEM=="power_supply", KERNEL=="bq256xx-charger|sc27xx-fgu|tcpm-source-psy-*", TEST=="power/wakeup", ATTR{power/wakeup}="disabled"
+ACTION=="add|change", SUBSYSTEM=="pci", KERNEL=="0000:11:00.0", ATTR{power/wakeup}="disabled"
+ACTION=="add|change", SUBSYSTEM=="platform", KERNEL=="25220000.sipa", ATTR{power/wakeup}="disabled"
