@@ -177,7 +177,7 @@ BaseTools，再构建运行时、平台、ESP 加载器、最终 FD、桥接和 
 每次构建先解析一次上游，将实际提交写入 `upstream.lock.json`，再传给各阶段。
 `--source-lock FILE` 可重放之前的清单；使用编译机产物时应指向该 Rust bundle 的
 `upstream.lock.json`，并一并传回 `Cargo.lock`。完整用法见
-[pj4edk2 上游源码说明](https://github.com/Yeamika/pj4edk2/blob/main/docs/upstream-sources.md)。
+[pj4edk2 上游源码说明](https://github.com/Yeamika/pj4edk2/blob/uefi/docs/upstream-sources.md)。
 
 已有编译机产物时，使用 `--rust-build /path/to/received/rust`，本地无需 Rust。
 已有完整组件时，使用 `--runtime-build /path/to/build/pocketjs` 和/或
