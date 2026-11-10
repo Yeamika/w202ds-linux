@@ -3,6 +3,6 @@
 	url = https://github.com/Yeamika/w202ds-linux-kernel.git
 	shallow = true
 [submodule "pj4edk2-linux-boot-display"]
-	path = components/pj4edk2-linux-boot-display
+	path = Devices/drm/source/pj4edk-boot-display/common
 	url = https://github.com/Yeamika/pj4edk2.git
 	branch = kernel-boot-display

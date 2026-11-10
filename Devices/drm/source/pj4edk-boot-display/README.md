@@ -48,3 +48,14 @@ EFI 内部发布的 BootDisplay 配置表使用另一份 36 字节矩形描述�
 完整内核构建检查内建接入；DRM 的 `source/baseline/tests/boot-display-contract.c`
 覆盖缺失、损坏、越界和两种有效布局。测试说明见该目录 README。
 分离后重新上机验证时钟交接、显示接管和异常退出；编译通过不等于真机通过。
+
+## 公共层归属
+
+本目录继续作为唯一 W202DS 启动显示模块。内部的 [common](common/README.md)
+固定 pj4edk2 `kernel-boot-display` 分支；远程通过 gitlink 固定提交，本地为相对符号链接。
+该公共依赖不在顶层 components 下另建并行驱动。
+
+抽取边界见 [common/ABSTRACTION.md](common/ABSTRACTION.md)：公共描述与校验先行，
+显存/保留区确认、DPU、时钟、电源、旋转与缓存操作留在本模块。
+当前 common 仅有初始化 MD，Makefile、Kconfig 和 C 实现仍使用本目录原有代码；
+后续公共 C 接口通过实际构建验证后才接入，不能将文档占位视为已完成通用化。
