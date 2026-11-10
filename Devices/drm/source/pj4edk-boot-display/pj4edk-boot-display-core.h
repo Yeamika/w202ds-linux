@@ -7,7 +7,7 @@
 #ifndef PJ4EDK_BOOT_DISPLAY_CORE_H
 #define PJ4EDK_BOOT_DISPLAY_CORE_H
 
-#include "common/include/pjb_boot_display.h"
+#include "common/include/pj4edk2_boot_display.h"
 
 #define PJ4EDK_COLS 160
 #define PJ4EDK_ROWS 50
@@ -49,7 +49,7 @@ static int pj4edk_terminal_init(struct pj4edk_terminal *t, const unsigned int *v
 {
 	unsigned int right, bottom, i, j;
 
-	if (!pjb_display_validate_cells(v, PJB_DISPLAY_CELLS) ||
+	if (!pj4edk2_display_validate_cells(v, PJ4EDK2_DISPLAY_CELLS) ||
 	    v[2] || v[3] != 0xb0000000 ||
 	    v[4] != 0x9e4000 || v[5] != 4608000 || v[6] != 1200 ||
 	    v[7] != 1920 || v[8] != 2400 ||

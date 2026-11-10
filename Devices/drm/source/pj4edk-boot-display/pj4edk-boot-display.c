@@ -203,8 +203,8 @@ static int __init pj4edk_console_init(void)
 	chosen = fdt_path_offset(initial_boot_params, "/chosen");
 	if (chosen < 0)
 		return 0;
-	property = fdt_getprop(initial_boot_params, chosen, PJB_DISPLAY_PROPERTY, &length);
-	if (!property || !pjb_display_decode_be(property, length, v))
+	property = fdt_getprop(initial_boot_params, chosen, PJ4EDK2_DISPLAY_PROPERTY, &length);
+	if (!property || !pj4edk2_display_decode_be(property, length, v))
 		return 0;
 	logo = fdt_path_offset(initial_boot_params, "/reserved-memory/logobuffer@b0000000");
 	if (logo < 0 || fdt_getprop(initial_boot_params, logo, "no-map", NULL) ||
