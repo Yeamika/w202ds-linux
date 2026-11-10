@@ -21,6 +21,8 @@ def main():
         'source_files': {str(f.relative_to(args.source)): sha(f)
                          for f in sorted(args.source.rglob('*')) if f.is_file()},
         'platform_lk_return_sha256': sha(args.platform/'Ums9620Pkg/Include/LkReturn.h'),
+        'linux_middleware_headers': {str(f.relative_to(args.source/'LinuxBoot/common')): sha(f)
+            for f in sorted((args.source/'LinuxBoot/common/include').glob('*.h'))},
         'abi_header_sha256': sha(args.abi_include/'pocketjs_boot_context.h'),
         'edk2': subprocess.check_output(['git', '-C', str(args.edk2), 'rev-parse', 'HEAD'], text=True).strip(),
         'defines': {name: os.environ.get(name, 'FALSE') for name in

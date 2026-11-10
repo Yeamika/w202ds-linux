@@ -268,3 +268,13 @@ python3 -m unittest discover -s pocketjs4edk2_uefi/tests -p test_efi_host.py -v
 
 全新克隆的验证必须使用真实 `components/` 子模块且不依赖 `ui`/`lk` 本地链接。
 发布时先推送组件所需提交，再推父仓库；仅在本地通过验证不代表远端已发布。
+
+## 由 REIMUKS 选择构建
+
+本地 `pocketjs4edk2_uefi/build-firmware.py` 是 REIMUKS 的板级适配器：
+接收 `--stage all|uefi|efi`、`--output`、`--kernel-source`、`--jobs`，
+使用本工程组件链接构建完整 PocketJS FD 和/或独立 ESP 应用。
+不需要 LK 底包或设置区，不组装 5 MiB 刷写容器，也不操作设备。
+调用前显式提供本地工具链 PATH 与 EDK_TOOLS_PATH；输出目录必须是源码树外的新目录。
+REIMUKS 的板级配置通过 `devices/w202ds/board.json` 指向此适配器，
+公开 rootfs 名为 desktop/server 与 desktop/kde；旧 DebianServer/DebianKDE ESP 路径保留。
