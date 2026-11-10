@@ -16,6 +16,7 @@
 #include <Library/UefiBootServicesTableLib.h>
 #include <libfdt.h>
 #include "LinuxDisplay.h"
+#include "common/include/pjb_linux_chosen.h"
 
 #ifdef W202_LINUX_SERVER
 #define PROFILE "server"
@@ -113,7 +114,7 @@ STATIC EFI_STATUS PrepareDisplay(VOID *Dtb,INT32 Chosen,EFI_SYSTEM_TABLE *System
   EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *Info; UINT32 V[20]; fdt32_t Cells[20];
   INT32 Logo,Length; CONST UINT8 *Reg; UINTN I;
   /* Never reuse a stale LK record when there is no current page request. */
-  INT32 R=fdt_delprop(Dtb,Chosen,"pocketjs,boot-display");
+  INT32 R=fdt_delprop(Dtb,Chosen,PJB_DISPLAY_PROPERTY);
   if (R && R!=-FDT_ERR_NOTFOUND) return EFI_VOLUME_CORRUPTED;
   CopyMem(&Guid,&WireGuid,sizeof(Guid));
   for (I=0;I<System->NumberOfTableEntries;++I)
@@ -140,23 +141,26 @@ STATIC EFI_STATUS PrepareDisplay(VOID *Dtb,INT32 Chosen,EFI_SYSTEM_TABLE *System
   Reg=fdt_getprop(Dtb,Logo,"reg",&Length);
   if (!Reg || Length!=16 || Be64(Reg)!=0xb0000000 || Be64(Reg+8)!=0x9e4000)
     return EFI_NO_MAPPING;
-  for (I=0;I<20;++I) Cells[I]=cpu_to_fdt32(V[I]);
+  if (!pjb_display_encode_be(V,PJB_DISPLAY_CELLS,Cells,sizeof(Cells)))
+    return EFI_UNSUPPORTED;
   /* Property insertion may move /chosen after /reserved-memory. */
   Chosen=fdt_path_offset(Dtb,"/chosen");
-  if (fdt_setprop(Dtb,Chosen,"pocketjs,boot-display",Cells,sizeof(Cells))) return EFI_VOLUME_CORRUPTED;
+  if (fdt_setprop(Dtb,Chosen,PJB_DISPLAY_PROPERTY,Cells,sizeof(Cells))) return EFI_VOLUME_CORRUPTED;
   DEBUG((DEBUG_WARN,"LINUX_EFI display=%ux%u rect=%u,%u,%u,%u\n",V[10],V[11],V[12],V[13],V[14],V[15]));
   return EFI_SUCCESS;
 }
 STATIC EFI_STATUS PrepareDtb(CONST VOID *Source,UINT64 InitrdBytes,EFI_SYSTEM_TABLE *System,
                              CONST UINT64 Times[5],UINT64 PrepareStarted) {
   VOID *Dtb=(VOID *)(UINTN)LINUX_DTB_BASE; INT32 Chosen,Result; UINTN I;
-  fdt64_t LoadTimes[6];
+  fdt64_t LoadTimes[6]; unsigned long long InitrdEnd;
   CONST CHAR8 *Drop[]={"kaslr-seed","rng-seed","linux,uefi-system-table","linux,uefi-mmap-start",
     "linux,uefi-mmap-size","linux,uefi-mmap-desc-size","linux,uefi-mmap-desc-ver"};
+  if (!pjb_linux_initrd_range(LINUX_INITRD_BASE,InitrdBytes,&InitrdEnd))
+    return EFI_INVALID_PARAMETER;
   if (fdt_open_into(Source,Dtb,(INT32)LINUX_DTB_CAPACITY)) return EFI_VOLUME_CORRUPTED;
   Chosen=fdt_path_offset(Dtb,"/chosen"); if (Chosen<0) return EFI_NOT_FOUND;
   if (fdt_setprop_u64(Dtb,Chosen,"linux,initrd-start",LINUX_INITRD_BASE) ||
-      fdt_setprop_u64(Dtb,Chosen,"linux,initrd-end",LINUX_INITRD_BASE+InitrdBytes) ||
+      fdt_setprop_u64(Dtb,Chosen,"linux,initrd-end",InitrdEnd) ||
       fdt_setprop_string(Dtb,Chosen,"w202,uefi-profile",PROFILE)) return EFI_VOLUME_CORRUPTED;
   // This pinned kernel forces its own command line; root selection is in initrd.
   for (I=0;I<ARRAY_SIZE(Drop);++I) {

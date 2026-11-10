@@ -34,10 +34,8 @@ EFI 文件访问与生命周期采用项目内 EDK II 协议。原始 ARM64 交�
 
 ## 公共层归属
 
-本目录继续作为唯一 W202DS Linux EFI 加载器。内部的 [common](common/README.md)
+本目录继续作为唯一 W202DS Linux EFI 加载器。内部的 [common](common/readme.md)
 固定 pj4edk2 `linux-efi` 分支；远程通过 gitlink 固定提交，本地为相对符号链接。
 不会在 components 下再建立另一套 Linux EFI 实现。
 
-拆分方案见 [common/ABSTRACTION.md](common/ABSTRACTION.md)：公共镜像/DT/显示协议
-处理逐步抽出；ESP 与启动策略、加载布局、GOP/DPU、PMIC 看门狗及硬件交接留在此项目。
-当前 common 仅有初始化 MD，INF 与 C 源码尚未改为调用公共实现，现有加载器行为不变。
+公共协议与实现见 [common/readme.md](common/readme.md)。本地已接入公共显示矩形/协议校验、大端编码及 initrd 地址范围检查；加载策略、GOP/DPU、PMIC 和交接操作留在本目录。远程中间件分支只含 readme.md，本地源码单独提交，不推送。
