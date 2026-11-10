@@ -7,6 +7,7 @@ import runpy
 import shutil
 import subprocess
 import sys
+from tools.project_paths import lk_directory
 
 ROOT = Path(__file__).resolve().parent
 
@@ -27,7 +28,7 @@ def main():
                AARCH64_OBJDUMP=shutil.which('aarch64-linux-gnu-objdump') or 'aarch64-linux-gnu-objdump',
                LK_RETURN_ELF=str(build/'lk-bridge/ramboot-enter.elf'),
                LK_RETURN_RESIDENT_IMAGE=str(build/'resident/uboot-b-uefi.img'))
-    tests = ROOT/'lk/ramboot/tests'
+    tests = lk_directory()/'ramboot/tests'
     for name in ('test_resident.py', 'test_return.py'):
         subprocess.run([sys.executable, '-m', 'unittest', 'discover', '-s', str(tests),
                         '-p', name, '-v'], env=env, cwd=build, check=True)

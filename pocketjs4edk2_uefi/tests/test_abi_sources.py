@@ -62,7 +62,7 @@ class PlatformSourcesTest(unittest.TestCase):
 
 
 class RepositoryDefaultsTest(unittest.TestCase):
-    def test_local_link_is_preferred_over_submodule(self):
+    def test_component_link_is_used_in_local_layout(self):
         with tempfile.TemporaryDirectory() as tmp:
             top = Path(tmp)
             root = top/'w202ds-boot'
@@ -71,11 +71,10 @@ class RepositoryDefaultsTest(unittest.TestCase):
             target.mkdir()
             (target/'build.sh').write_text('')
             submodule = root/'components'/'edk2-ums9620'
-            submodule.mkdir(parents=True)
-            (submodule/'build.sh').write_text('')
-            (root/'edk2-ums9620').symlink_to(target, target_is_directory=True)
+            submodule.parent.mkdir(parents=True)
+            submodule.symlink_to(target, target_is_directory=True)
             self.assertEqual(API['default_repository']('edk2-ums9620', 'build.sh', root),
-                             root/'edk2-ums9620')
+                             submodule)
 
     def test_component_submodule_is_used_without_a_local_link(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -87,10 +86,16 @@ class RepositoryDefaultsTest(unittest.TestCase):
 
     def test_missing_component_falls_back_to_sibling(self):
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            (root/'pj4edk2').mkdir()
+            root = Path(tmp)/'w202ds-boot'/'pocketjs4edk2_uefi'
+            root.mkdir(parents=True)
             self.assertEqual(API['default_repository']('pj4edk2', 'build.sh', root),
-                             root.parent/'pj4edk2')
+                             root.parent.parent/'pj4edk2')
+
+    def test_test_runner_finds_board_lk_without_ignored_link(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)/'w202ds-boot'/'pocketjs4edk2_uefi'
+            (root.parent/'lk/ramboot').mkdir(parents=True)
+            self.assertEqual(API['PATHS']['lk_directory'](root), root.parent/'lk')
 
 
 if __name__ == '__main__':

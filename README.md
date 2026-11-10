@@ -1,134 +1,37 @@
-# W202DS Boot
+# w202ds-boot
 
-W202DS 引导固件的组合层：保留当前使用的 LK 驻留/返回桥接源码，组合 `edk2-ums9620` 与 `pj4edk2` 的产物，生成完整 B 槽引导镜像和 ESP 加载器目录。
+W202DS 引导固件仓库。当前布局把可构建的组合工程放在
+[`pocketjs4edk2_uefi/`](pocketjs4edk2_uefi/README.md)，仓库根只保留板级 LK 材料。
 
-## 四个仓库如何配合
-
-| 仓库           | 负责的功能                                                                       |
-| -------------- | -------------------------------------------------------------------------------- |
-| [`edk2-ums9620`](https://github.com/Yeamika/edk2-ums9620) | EDK II 核心、UMS9620 UEFI 驱动、LK 交接接口、Android/Linux EFI 加载器            |
-| [`pj4edk2`](https://github.com/Yeamika/pj4edk2) | 公共 ABI、PocketJS 引擎、UEFI 运行时、默认菜单/设置/恢复/充电页面                |
-| `w202ds-boot`  | LK 桥接、板级菜单配置、最终链接、RAMBoot 包装、5 MiB LK 容器封装、ESP 加载器布局 |
-| `w202ds-linux` | Linux 内核、设备树、模块、硬件固件及 Linux 集成                                  |
-
-`edk2-ums9620` 与 `pj4edk2` 以子模块登记在 `components/` 下，URL 指向各自的
-GitHub 仓库，父仓库记录一个子模块提交。远端克隆默认按该提交检出；本地开发可以在
-仓库根目录创建指向并排 checkout 的符号链接（`edk2-ums9620`、`pj4edk2`），
-`build.py` 会优先使用这些链接，因此构建读取本地当前提交而不是父仓库记录的 SHA。
-`w202ds-linux` 同样由外部提供。
-
-```mermaid
-flowchart LR
-  E[edk2-ums9620 平台组件] --> L[最终链接]
-  P[pj4edk2 PocketJS.a 与 ABI 库] --> L
-  C[板级配置] --> L
-  L --> F[w202ds.fd]
-  F --> R[RAMBoot 包装]
-  R --> B[LK 容器封装]
-  K[固定 LK 底包与桥接代码] --> B
-  B --> I[uboot-b-uefi.img]
+```text
+w202ds-boot/
+├── pocketjs4edk2_uefi/   # 组合构建：EDK II + PocketJS + ESP + LK 容器
+└── lk/                   # LK 桥接、原厂 LK 与 LK 参考代码
 ```
 
-运行时顺序为：LK 初始化底层硬件 → 桥接进入 EDK II → PocketJS 菜单 → EFI 加载 Linux 或返回 LK 启动 Android。EDK II 不链接 LK `.a`。
+## 快速开始
 
-## 为什么还需要 LK 底包
-
-底包是版本固定的 W202DS LK **二进制** `uboot-b-pjs-ram-v2.img`，不是另一个源码工程。本流程重编译 `lk/` 中的桥接/加载器，再补入该底包。完整上游 LK 源码来自 `sprd-linux/lk`，但目前没有经过验证、能从该完整源码树重建这个底包的流程。
-
-因此这里保存实际使用的桥接源码及来源版本，不引入整棵未参与构建的 LK。二进制输入由调用者明确提供；名称、用途、尺寸和 SHA-256 见 [inputs.lock.json](inputs.lock.json)。底包哈希不匹配会拒绝封装。设置镜像用于保留末尾两份 PJB 设置区，需与相同底包兼容。
-
-## 完整构建
-
-远端用户按 `components/` 下的子模块检出固定版本：
+远端克隆并初始化两个组件子模块：
 
 ```sh
 git clone --recursive https://github.com/Yeamika/w202ds-boot.git
 ```
 
-已经 clone 但没初始化子模块时：
+完整构建说明、组件查找顺序、ESP 源码布局和产物列表见
+[`pocketjs4edk2_uefi/README.md`](pocketjs4edk2_uefi/README.md)。
 
 ```sh
-git submodule update --init
-```
-
-本地开发使用并排 checkout 时，在仓库根目录创建链接：
-
-```sh
-git clone https://github.com/Yeamika/w202ds-boot.git
-git clone https://github.com/Yeamika/edk2-ums9620.git
-git clone https://github.com/Yeamika/pj4edk2.git
-cd w202ds-boot
-ln -s ../edk2-ums9620 edk2-ums9620
-ln -s ../pj4edk2 pj4edk2
-```
-
-这两个根目录链接已被 `.gitignore` 忽略，不会提交。`build.py` 的查找顺序是：
-根目录本地链接 → `components/` 子模块 → 并排的 `../edk2-ums9620` /
-`../pj4edk2`；也可以用 `--edk2`、`--pocketjs` 指向任意 checkout。因此本地链接
-存在时，即使 `components/` 子模块已经初始化，构建仍使用链接目标。父仓库记录的
-子模块 SHA 不会随本地链接自动更新；需要更新固定版本时，使用
-`git submodule update --remote` 后提交新的 gitlink。
-
-组件仓库内部的 `edk2`/`edk2-libc` 子模块只在单独构建组件时需要；组合构建会按
-锁文件自动获取这些上游。
-
-需要 Bash、Python 3.11+、GNU make、GCC/G++、UUID 开发头文件、AArch64 GNU GCC/binutils，以及 `pj4edk2` 声明的 Rust 工具链。两个组件仓库各自获取上游依赖，版本见各自 README。
-
-```sh
-python3 build.py --output /path/to/build/w202ds \
+python3 pocketjs4edk2_uefi/build.py --output /path/to/build/w202ds \
   --lk-baseline /path/to/inputs/uboot-b-pjs-ram-v2.img \
   --settings-image /path/to/inputs/settings-source.img \
-  --touch-firmware ../w202ds-linux/6.18.35/Devices/touchscreen/firmware/Himax_firmware_guoxian.bin
+  --touch-firmware /path/to/Himax_firmware_guoxian.bin
 ```
 
-`--output` 必须是位于本仓库、两个组件仓库和 UI 目录之外的新目录。`--edk2`、`--pocketjs` 可指定另外两个仓库；`--jobs` 控制并行度。构建先生成私有 BaseTools，再构建运行时、平台、最终 FD、桥接和 LK 容器，各阶段日志保存在输出的 `logs/`。
+## 目录职责
 
-使用外部默认 UI 时加 `--default-ui /path/to/my-project/ui`，此目录遵循 `pj4edk2` 的 `ui.json`
-格式。使用已有 `--rust-build` 或 `--runtime-build` 时也传入相同 UI，脚本会校验清单、JS 和字体
-哈希，最终 `manifest.json` 记录实际 UI 输入。UI 文件不会被改写。
+- `pocketjs4edk2_uefi/`：组合层源码、EFI 启动器、测试和构建工具；内部
+  `components/` 以子模块固定 `edk2-ums9620` 与 `pj4edk2`。
+- `lk/`：当前使用的 LK 桥接和 RAMBoot 源码，也是后续原厂 LK 及板级 LK
+  参考代码的存放位置。本目录不参与 ESP 独立编译，由组合构建通过链接使用。
 
-构建会通过 `edk2-ums9620` 获取 EDK II 和两份 Brotli，通过 `pj4edk2` 获取
-`edk2-libc`、PocketJS、QuickJS-NG，默认使用两个项目各自声明的固定提交。
-可以重复传入 `--source-ref edk2=指定提交`、`--source-ref pocketjs=latest`、
-`--source-ref quickjs=完整提交或分支或标签`，以及 `--source-repo NAME=URL` 选择自己的 fork。
-`NAME` 支持 `edk2`、`brotli`、`edk2-libc`、`pocketjs`、`quickjs`，
-也支持平台清单中的两个完整 Brotli 子模块路径。`--source-cache DIR` 可复用下载。
-所选源码会实际参与编译；最新版本的接口变化可能需要适配。
-
-`pj4edk2` 可独立使用通用 EDK II。本组合工程通过 `--edk2` 向它传入 W202DS
-平台实际使用的 EDK II checkout，并核对运行时 ABI 库、平台源码和 `platform-build.json`
-中的 EDK II 提交一致；平台清单还核对两个 Brotli 的实际仓库和提交。
-平台版本选择和兼容性检查属于本工程。
-
-每次构建先解析一次上游，将实际提交写入 `upstream.lock.json`，再传给各阶段。
-`--source-lock FILE` 可重放之前的清单；使用编译机产物时应指向该 Rust bundle 的
-`upstream.lock.json`，并一并传回 `Cargo.lock`。完整用法见
-[pj4edk2 上游源码说明](https://github.com/Yeamika/pj4edk2/blob/main/docs/upstream-sources.md)。
-
-已有编译机产物时，使用 `--rust-build /path/to/received/rust`，本地无需 Rust。已有完整组件时，使用 `--runtime-build /path/to/build/pocketjs` 和/或 `--platform-build /path/to/build/platform`；提供的组件必须来自匹配的源码、配置和工具链。`EDK_TOOLS_PATH` 可以指向已编译的 BaseTools。
-
-## 产物
-
-| 输出                                      | 内容                                     |
-| ----------------------------------------- | ---------------------------------------- |
-| `w202ds.fd`                               | EDK II + PocketJS 最终固件卷，2 MiB      |
-| `ramboot.img`                             | 带校验描述符的 Android RAMBoot 包装      |
-| `resident/uboot-b-uefi.img`               | LK + 桥接 + RAMBoot，完整 5 MiB B 槽容器 |
-| `ESP/EFI/Android/bootaa64.efi`            | 返回 LK 启动 Android                     |
-| `ESP/EFI/DebianServer/bootaa64.efi`       | Server Linux 加载器                      |
-| `ESP/EFI/DebianKDE/bootaa64.efi`          | KDE Linux 加载器                         |
-| `manifest.json`、`resident/manifest.json` | 输入与输出哈希、封装布局和验证状态       |
-
-`ESP/` 是加载器增量目录；操作系统镜像和设备树仍由各系统提供，并不是一份完整 ESP 备份。构建入口只在主机生成文件。离线链接检查不能代替真机验证，迁移后的验证记录见 [VALIDATION.md](VALIDATION.md)。
-
-## 底层工具
-
-安装 Python `unicorn==2.1.4` 后，可对上述默认生产配置的构建运行现有 ARM64 测试：
-
-```sh
-PYTHONDONTWRITEBYTECODE=1 python3 test.py --build /path/to/build/w202ds
-```
-
-这会执行实际编译的 resident 和返回汇编，覆盖正常启动、原生模式保留、损坏/读取失败、显示/按键异常和返回上下文；MMIO、GIC 等硬件行为仍由测试模型提供。
-
-`tools/edk2_sdk.py` 提供平台 SDK 导出、最终链接和验证；`tools/mkramboot.py` 检查 SEC 重定位并包装 FD；`lk/ramboot/package-resident.py` 检查底包、容量、不可变区域及设置区。`lk/ramboot/tests/` 保留 ARM64 Unicorn 桥接测试；所需输入通过测试中的环境变量显式提供。
+历史验证记录在 [`pocketjs4edk2_uefi/VALIDATION.md`](pocketjs4edk2_uefi/VALIDATION.md)。

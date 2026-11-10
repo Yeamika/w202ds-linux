@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: BSD-2-Clause-Patent
+[Defines]
+  INF_VERSION = 0x0001001B
+  BASE_NAME = AndroidBoot
+  FILE_GUID = a5e97492-26a4-4a82-a3c3-96b388269520
+  MODULE_TYPE = UEFI_APPLICATION
+  VERSION_STRING = 0.1
+  ENTRY_POINT = UefiMain
+[Sources]
+  AndroidBoot.c
+  BootImage.c
+  BootImage.h
+  EnterKernel.S
+[Packages]
+  MdePkg/MdePkg.dec
+  MdeModulePkg/MdeModulePkg.dec
+  ArmPkg/ArmPkg.dec
+  EmbeddedPkg/EmbeddedPkg.dec
+[LibraryClasses]
+  UefiApplicationEntryPoint
+  UefiBootServicesTableLib
+  MemoryAllocationLib
+  BaseLib
+  BaseMemoryLib
+  ArmLib
+  DebugLib
+  FdtLib
+  TimerLib
+[Protocols]
+  gEfiBlockIoProtocolGuid
+  gEfiPartitionInfoProtocolGuid
+  gEfiSimpleFileSystemProtocolGuid
+[Guids]
+  gEfiPartTypeSystemPartGuid
+  gEfiFileInfoGuid

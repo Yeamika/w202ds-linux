@@ -11,15 +11,11 @@ import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parent
+REPOSITORY = ROOT.parent
+PATHS = runpy.run_path(str(ROOT/'tools/project_paths.py'))
+default_repository = PATHS['default_repository']
+LK = PATHS['lk_directory']()
 RUNTIME_SOURCES = ('edk2-libc', 'pocketjs', 'quickjs')
-
-
-def default_repository(name, marker, root=ROOT):
-    # Prefer a local link, then the submodule checkout, then a sibling checkout.
-    for candidate in (root/name, root/'components'/name, root.parent/name):
-        if (candidate/marker).is_file():
-            return candidate
-    return root.parent/name
 
 
 def sha(path):
@@ -72,9 +68,9 @@ def verify_platform_sources(platform, expected):
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--edk2', type=Path, default=default_repository('edk2-ums9620', 'build.sh'),
-                   help='platform repository (default: local link, components submodule, or sibling)')
+                   help='platform repository (default: components link/submodule, or sibling)')
     p.add_argument('--pocketjs', type=Path, default=default_repository('pj4edk2', 'build.sh'),
-                   help='runtime repository (default: local link, components submodule, or sibling)')
+                   help='runtime repository (default: components link/submodule, or sibling)')
     p.add_argument('--default-ui', type=Path, help='external pj4edk2 UI directory containing ui.json')
     p.add_argument('--source-cache', type=Path, help='external upstream Git cache shared by build stages')
     p.add_argument('--source-lock', type=Path, help='resolved upstream.lock.json to replay')
@@ -98,17 +94,20 @@ def main():
             setattr(a, name, value.resolve())
     if a.jobs < 1:
         p.error('--jobs must be positive')
-    for source in (ROOT, a.edk2, a.pocketjs):
+    for source in (REPOSITORY, LK, a.edk2, a.pocketjs):
         if a.output == source or source in a.output.parents:
-            p.error('--output must be outside all three source repositories')
+            p.error('--output must be outside all source repositories')
     if a.output.exists():
         p.error('output exists; choose a fresh directory')
     runtime_api = runpy.run_path(str(a.pocketjs/'tools/rust-bundle.py'))
     platform_api = runpy.run_path(str(a.edk2/'tools/upstream.py'))
     platform_repos, runtime_repos = route_source_options(a.source_repo, platform_api['NAMES'])
     platform_refs, runtime_refs = route_source_options(a.source_ref, platform_api['NAMES'])
-    # Resolve the same default as build.sh, including direct Cargo integration.
-    a.default_ui = (a.default_ui or Path(os.environ.get('PJB_DEFAULT_UI') or a.pocketjs/'default-ui')).resolve()
+    # Prefer an explicit UI, then the project link, then the component default.
+    linked_ui = ROOT/'ui'
+    default_ui = (a.default_ui or Path(os.environ.get('PJB_DEFAULT_UI') or
+                  (linked_ui if (linked_ui/'ui.json').is_file() else a.pocketjs/'default-ui')))
+    a.default_ui = default_ui.resolve()
     if a.output == a.default_ui or a.default_ui in a.output.parents:
         p.error('--output must be outside the UI directory')
     lock = json.loads((ROOT/'inputs.lock.json').read_text())
@@ -133,7 +132,7 @@ def main():
 
     source_lock = a.output/'upstream.lock.json'
     source_cache = (a.source_cache or Path(env.get('PJB_SOURCE_CACHE') or a.output/'source-cache')).resolve()
-    for source in (ROOT, a.edk2, a.pocketjs, a.default_ui):
+    for source in (REPOSITORY, LK, a.edk2, a.pocketjs, a.default_ui):
         if source_cache == source or source in source_cache.parents:
             p.error('--source-cache must be outside source and UI directories')
     platform_sources = a.output/'platform-sources'
@@ -206,10 +205,14 @@ def main():
     platform_manifest = json.loads((platform/'platform-build.json').read_text())
     verify_platform_sources(platform_manifest, platform_upstream)
     verify_abi_sources(support_manifest, upstream_sources, platform_manifest['edk2'])
-    build = platform/'workspace/Build/Ums9620/RELEASE_GCC5'
+    platform_build = platform/'workspace/Build/Ums9620/RELEASE_GCC5'
+    efi = a.output/'efi'
+    run('efi', 'bash', ROOT/'efi/build-efi.sh', '--edk2', edk2_source, '--platform', a.edk2,
+        '--abi-include', a.pocketjs/'pocketjsforedk2/include', '--output', efi, '--jobs', a.jobs,
+        '--python', sys.executable)
     sdk = a.output/'link-sdk'
     run('export-sdk', sys.executable, ROOT/'tools/edk2_sdk.py', 'export', '--board', 'w202ds',
-        '--id', a.revision, '--source', a.edk2, '--fv', build/'FV', '--support', support,
+        '--id', a.revision, '--source', a.edk2, '--fv', platform_build/'FV', '--support', support,
         '--config', ROOT/'config/pocketjs.json', '--tools', tools/'Source/C/bin',
         '--size', '0x200000', '--output', sdk)
     run('link', sys.executable, ROOT/'tools/edk2_sdk.py', 'link', '--sdk', sdk/'payload',
@@ -217,7 +220,7 @@ def main():
     run('ramboot', sys.executable, ROOT/'tools/mkramboot.py', '--fd', a.output/'w202ds.fd',
         '--output', a.output/'ramboot.img')
     bridge = a.output/'lk-bridge'
-    lk = ROOT/'lk/ramboot'
+    lk = LK/'ramboot'
     run('lk-bridge', 'make', '-C', lk, f'OUT={bridge}', 'LK_RETURN=1',
         f'HANDOFF_INCLUDE={a.edk2/"Ums9620Pkg/Include"}', 'resident', 'enter-sec')
     resident = a.output/'resident'
@@ -230,12 +233,21 @@ def main():
     for folder, name in [('Android', 'AndroidLk'), ('DebianServer', 'DebianServer'), ('DebianKDE', 'DebianKde')]:
         destination = a.output/'ESP/EFI'/folder/'bootaa64.efi'
         destination.parent.mkdir(parents=True)
-        shutil.copy2(build/'AARCH64'/(name+'.efi'), destination)
+        shutil.copy2(efi/'bin'/(name+'.efi'), destination)
+    for name in ('AndroidBoot', 'HandoffProbe', 'TouchScope'):
+        destination = a.output/'ESP/EFI/Tools'/(name+'.efi')
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(efi/'bin'/(name+'.efi'), destination)
+    for entry in json.loads((ROOT/'config/pocketjs.json').read_text())['entries']:
+        path = entry['path']
+        if not path.startswith('\\EFI\\') or not (a.output/'ESP'/path.lstrip('\\').replace('\\', '/')).is_file():
+            raise SystemExit(f'Menu entry has no matching ESP artifact: {path}')
     artifacts = [a.output/'w202ds.fd', a.output/'ramboot.img', resident/'uboot-b-uefi.img',
+                 efi/'efi-build.json', *sorted((efi/'bin').glob('*.efi')),
                  *sorted((a.output/'ESP').rglob('*.efi'))]
     manifest = {'schema': 1, 'revision': a.revision, 'device_validation': 'not-tested',
                 'source_repositories': {name: repository_identity(path) for name, path in
-                                        [('edk2-ums9620', a.edk2), ('pj4edk2', a.pocketjs), ('w202ds-boot', ROOT)]},
+                                        [('edk2-ums9620', a.edk2), ('pj4edk2', a.pocketjs), ('w202ds-boot', REPOSITORY)]},
                 'inputs': {name: {'bytes': getattr(a, name).stat().st_size, 'sha256': sha(getattr(a, name))}
                            for name in ('lk_baseline', 'settings_image', 'touch_firmware')},
                 'runtime_sha256': sha(runtime/'PocketJS.a'),

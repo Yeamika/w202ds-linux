@@ -25,7 +25,7 @@ ramboot/
 
 ## Experimental（实验中）
 
-`LK_RETURN=1` 可保存 CPU、GIC 和计时器上下文，供 EFI 适配程序退出后返回同一次启动的 LK。2026-11-05 RAM 往返 probe、正常菜单及 B 常驻普通重启后经原厂 LK 继续启动 Android A 均已通过，Android完成启动、ADB/root正常；用户已验收实体按键启动。6项 ARM64 仿真覆盖寄存器／失败分支、下载区权限、Fastboot应答及冷启动入口；仿真不建模真实GIC硬件。当时的5 MiB容器 `072bcff0…` 已写 B 并完整读回。此前菜单退回的 EFI 安全通知问题已在外层修复；彻底断电和反复启动仍待验收。底层 Makefile 默认未启用，仓库根 build.py 显式启用；该构建另需 `HANDOFF_INCLUDE/LkReturn.h`。
+`LK_RETURN=1` 可保存 CPU、GIC 和计时器上下文，供 EFI 适配程序退出后返回同一次启动的 LK。2026-11-05 RAM 往返 probe、正常菜单及 B 常驻普通重启后经原厂 LK 继续启动 Android A 均已通过，Android完成启动、ADB/root正常；用户已验收实体按键启动。6项 ARM64 仿真覆盖寄存器／失败分支、下载区权限、Fastboot应答及冷启动入口；仿真不建模真实GIC硬件。当时的5 MiB容器 `072bcff0…` 已写 B 并完整读回。此前菜单退回的 EFI 安全通知问题已在外层修复；彻底断电和反复启动仍待验收。底层 Makefile 默认未启用，pocketjs4edk2_uefi/build.py 显式启用；该构建另需 `HANDOFF_INCLUDE/LkReturn.h`。
 
 原生引导前必须离开 `0x86000000` 的 RAM 模块，再用已匹配的 LK helper 恢复下载区 RW+XN；原厂加载器会用这个区域装入 boot 镜像。Fastboot路径保留原命令应答，冷启动路径直接续接 normal_mode。`W202_LK_RETURN_DEFER_ANDROID` 是只用于分步诊断的构建开关：选好 Android 后返回 Fastboot，随后由宿主发送 continue；不用于交付镜像。
 
@@ -56,8 +56,8 @@ make -C lk/ramboot \
 
 `HANDOFF_INCLUDE` 由外层提供 `LoaderHandoff.h`；纯只读探针不需要它。`package-resident.py prepare` 产生布局与 bundle，再构建 `resident-bootstrap`，最后 `package`。参数见 `--help`。工具只处理文件，刷写由外层负责。
 
-`tests/test_*.py` 通过环境参数接受真实镜像、ELF 和 FD，使用 Unicorn 执行 ARM64。仿真不代替真机；本次新构建的验证范围见仓库根目录 VALIDATION.md。
+`tests/test_*.py` 通过环境参数接受真实镜像、ELF 和 FD，使用 Unicorn 执行 ARM64。仿真不代替真机；本次新构建的验证范围见pocketjs4edk2_uefi/VALIDATION.md。
 
 ## 来源与参考
 
-解析器、公开上游和许可证见 [仓库说明](../../README.md) 与 [输入版本](../../inputs.lock.json)。固定原厂 ABI、签名基线和冷启动日志来自本机备份与探针；实际文件选择由外层传入。本目录与旧 PJB 的 `resident/resident-*.S` 分别维护各自的启动逻辑。
+解析器、公开上游和许可证见 [仓库说明](../../README.md) 与 [输入版本](../../pocketjs4edk2_uefi/inputs.lock.json)。固定原厂 ABI、签名基线和冷启动日志来自本机备份与探针；实际文件选择由外层传入。本目录与旧 PJB 的 `resident/resident-*.S` 分别维护各自的启动逻辑。

@@ -33,7 +33,7 @@
     {
       "id": "touch-test",
       "name": "UEFITEST-Touch",
-      "path": "fv:31f7ea83-e392-48da-a1f7-f01aad25b17d",
+      "path": "\\EFI\\Tools\\TouchScope.efi",
       "icon": "system",
       "parameters": {}
     }
