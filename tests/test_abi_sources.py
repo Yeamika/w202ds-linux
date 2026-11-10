@@ -1,6 +1,7 @@
 """The firmware assembler owns platform/runtime EDK II compatibility checks."""
 from pathlib import Path
 import runpy
+import tempfile
 import unittest
 
 API = runpy.run_path(str(Path(__file__).resolve().parents[1]/'build.py'))
@@ -58,6 +59,38 @@ class PlatformSourcesTest(unittest.TestCase):
         self.record['dependencies'][self.names[1]]['commit'] = 'b'*40
         with self.assertRaisesRegex(SystemExit, 'Legacy platform manifest'):
             API['verify_platform_sources'](platform, self.record)
+
+
+class RepositoryDefaultsTest(unittest.TestCase):
+    def test_local_link_is_preferred_over_submodule(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            top = Path(tmp)
+            root = top/'w202ds-boot'
+            root.mkdir()
+            target = top/'edk2-ums9620'
+            target.mkdir()
+            (target/'build.sh').write_text('')
+            submodule = root/'components'/'edk2-ums9620'
+            submodule.mkdir(parents=True)
+            (submodule/'build.sh').write_text('')
+            (root/'edk2-ums9620').symlink_to(target, target_is_directory=True)
+            self.assertEqual(API['default_repository']('edk2-ums9620', 'build.sh', root),
+                             root/'edk2-ums9620')
+
+    def test_component_submodule_is_used_without_a_local_link(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)/'w202ds-boot'
+            submodule = root/'components'/'pj4edk2'
+            submodule.mkdir(parents=True)
+            (submodule/'build.sh').write_text('')
+            self.assertEqual(API['default_repository']('pj4edk2', 'build.sh', root), submodule)
+
+    def test_missing_component_falls_back_to_sibling(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root/'pj4edk2').mkdir()
+            self.assertEqual(API['default_repository']('pj4edk2', 'build.sh', root),
+                             root.parent/'pj4edk2')
 
 
 if __name__ == '__main__':

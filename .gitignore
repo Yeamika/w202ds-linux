@@ -4,3 +4,7 @@ output/
 *.img
 *.bin
 !tests/fixtures/*
+
+# Local component checkouts linked for development; see README.
+/edk2-ums9620
+/pj4edk2

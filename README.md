@@ -6,10 +6,16 @@ W202DS 引导固件的组合层：保留当前使用的 LK 驻留/返回桥接�
 
 | 仓库           | 负责的功能                                                                       |
 | -------------- | -------------------------------------------------------------------------------- |
-| `edk2-ums9620` | EDK II 核心、UMS9620 UEFI 驱动、LK 交接接口、Android/Linux EFI 加载器            |
-| `pj4edk2`      | 公共 ABI、PocketJS 引擎、UEFI 运行时、默认菜单/设置/恢复/充电页面                |
+| [`edk2-ums9620`](https://github.com/Yeamika/edk2-ums9620) | EDK II 核心、UMS9620 UEFI 驱动、LK 交接接口、Android/Linux EFI 加载器            |
+| [`pj4edk2`](https://github.com/Yeamika/pj4edk2) | 公共 ABI、PocketJS 引擎、UEFI 运行时、默认菜单/设置/恢复/充电页面                |
 | `w202ds-boot`  | LK 桥接、板级菜单配置、最终链接、RAMBoot 包装、5 MiB LK 容器封装、ESP 加载器布局 |
 | `w202ds-linux` | Linux 内核、设备树、模块、硬件固件及 Linux 集成                                  |
+
+`edk2-ums9620` 与 `pj4edk2` 以子模块登记在 `components/` 下，URL 指向各自的
+GitHub 仓库，父仓库记录一个子模块提交。远端克隆默认按该提交检出；本地开发可以在
+仓库根目录创建指向并排 checkout 的符号链接（`edk2-ums9620`、`pj4edk2`），
+`build.py` 会优先使用这些链接，因此构建读取本地当前提交而不是父仓库记录的 SHA。
+`w202ds-linux` 同样由外部提供。
 
 ```mermaid
 flowchart LR
@@ -33,7 +39,40 @@ flowchart LR
 
 ## 完整构建
 
-三个仓库可并排放置，也可以通过参数指定位置。需要 Bash、Python 3.11+、GNU make、GCC/G++、UUID 开发头文件、AArch64 GNU GCC/binutils，以及 `pj4edk2` 声明的 Rust 工具链。两个组件仓库各自获取上游依赖，版本见各自 README，无需先初始化 EDK II 子模块。
+远端用户按 `components/` 下的子模块检出固定版本：
+
+```sh
+git clone --recursive https://github.com/Yeamika/w202ds-boot.git
+```
+
+已经 clone 但没初始化子模块时：
+
+```sh
+git submodule update --init
+```
+
+本地开发使用并排 checkout 时，在仓库根目录创建链接：
+
+```sh
+git clone https://github.com/Yeamika/w202ds-boot.git
+git clone https://github.com/Yeamika/edk2-ums9620.git
+git clone https://github.com/Yeamika/pj4edk2.git
+cd w202ds-boot
+ln -s ../edk2-ums9620 edk2-ums9620
+ln -s ../pj4edk2 pj4edk2
+```
+
+这两个根目录链接已被 `.gitignore` 忽略，不会提交。`build.py` 的查找顺序是：
+根目录本地链接 → `components/` 子模块 → 并排的 `../edk2-ums9620` /
+`../pj4edk2`；也可以用 `--edk2`、`--pocketjs` 指向任意 checkout。因此本地链接
+存在时，即使 `components/` 子模块已经初始化，构建仍使用链接目标。父仓库记录的
+子模块 SHA 不会随本地链接自动更新；需要更新固定版本时，使用
+`git submodule update --remote` 后提交新的 gitlink。
+
+组件仓库内部的 `edk2`/`edk2-libc` 子模块只在单独构建组件时需要；组合构建会按
+锁文件自动获取这些上游。
+
+需要 Bash、Python 3.11+、GNU make、GCC/G++、UUID 开发头文件、AArch64 GNU GCC/binutils，以及 `pj4edk2` 声明的 Rust 工具链。两个组件仓库各自获取上游依赖，版本见各自 README。
 
 ```sh
 python3 build.py --output /path/to/build/w202ds \
@@ -42,7 +81,7 @@ python3 build.py --output /path/to/build/w202ds \
   --touch-firmware ../w202ds-linux/6.18.35/Devices/touchscreen/firmware/Himax_firmware_guoxian.bin
 ```
 
-`--output` 必须是位于三个源码树外的新目录。`--edk2`、`--pocketjs` 可指定另外两个仓库；`--jobs` 控制并行度。构建先生成私有 BaseTools，再构建运行时、平台、最终 FD、桥接和 LK 容器，各阶段日志保存在输出的 `logs/`。
+`--output` 必须是位于本仓库、两个组件仓库和 UI 目录之外的新目录。`--edk2`、`--pocketjs` 可指定另外两个仓库；`--jobs` 控制并行度。构建先生成私有 BaseTools，再构建运行时、平台、最终 FD、桥接和 LK 容器，各阶段日志保存在输出的 `logs/`。
 
 使用外部默认 UI 时加 `--default-ui /path/to/my-project/ui`，此目录遵循 `pj4edk2` 的 `ui.json`
 格式。使用已有 `--rust-build` 或 `--runtime-build` 时也传入相同 UI，脚本会校验清单、JS 和字体
@@ -64,7 +103,7 @@ python3 build.py --output /path/to/build/w202ds \
 每次构建先解析一次上游，将实际提交写入 `upstream.lock.json`，再传给各阶段。
 `--source-lock FILE` 可重放之前的清单；使用编译机产物时应指向该 Rust bundle 的
 `upstream.lock.json`，并一并传回 `Cargo.lock`。完整用法见
-[pj4edk2 上游源码说明](../pj4edk2/docs/upstream-sources.md)。
+[pj4edk2 上游源码说明](https://github.com/Yeamika/pj4edk2/blob/main/docs/upstream-sources.md)。
 
 已有编译机产物时，使用 `--rust-build /path/to/received/rust`，本地无需 Rust。已有完整组件时，使用 `--runtime-build /path/to/build/pocketjs` 和/或 `--platform-build /path/to/build/platform`；提供的组件必须来自匹配的源码、配置和工具链。`EDK_TOOLS_PATH` 可以指向已编译的 BaseTools。
 

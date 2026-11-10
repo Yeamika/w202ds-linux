@@ -14,6 +14,14 @@ ROOT = Path(__file__).resolve().parent
 RUNTIME_SOURCES = ('edk2-libc', 'pocketjs', 'quickjs')
 
 
+def default_repository(name, marker, root=ROOT):
+    # Prefer a local link, then the submodule checkout, then a sibling checkout.
+    for candidate in (root/name, root/'components'/name, root.parent/name):
+        if (candidate/marker).is_file():
+            return candidate
+    return root.parent/name
+
+
 def sha(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -63,8 +71,10 @@ def verify_platform_sources(platform, expected):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--edk2', type=Path, default=ROOT.parent/'edk2-ums9620', help='platform repository')
-    p.add_argument('--pocketjs', type=Path, default=ROOT.parent/'pj4edk2', help='runtime repository')
+    p.add_argument('--edk2', type=Path, default=default_repository('edk2-ums9620', 'build.sh'),
+                   help='platform repository (default: local link, components submodule, or sibling)')
+    p.add_argument('--pocketjs', type=Path, default=default_repository('pj4edk2', 'build.sh'),
+                   help='runtime repository (default: local link, components submodule, or sibling)')
     p.add_argument('--default-ui', type=Path, help='external pj4edk2 UI directory containing ui.json')
     p.add_argument('--source-cache', type=Path, help='external upstream Git cache shared by build stages')
     p.add_argument('--source-lock', type=Path, help='resolved upstream.lock.json to replay')
