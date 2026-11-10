@@ -16,16 +16,18 @@
 #include <Library/UefiBootServicesTableLib.h>
 #include <libfdt.h>
 #include "LinuxDisplay.h"
-#include "common/include/pjb_linux_chosen.h"
+#include "common/include/pj4edk2_linux_chosen.h"
 
 #ifdef W202_LINUX_SERVER
 #define PROFILE "server"
 #define BOOT_PATH L"\\EFI\\DebianServer\\boot.img"
 #define META_PATH L"\\EFI\\DebianServer\\payload.bin"
+#define ROOT_PATH L"\\EFI\\DebianServer\\root-partuuid"
 #else
 #define PROFILE "kde"
 #define BOOT_PATH L"\\EFI\\DebianKDE\\boot.img"
 #define META_PATH L"\\EFI\\DebianKDE\\payload.bin"
+#define ROOT_PATH L"\\EFI\\DebianKDE\\root-partuuid"
 #endif
 VOID W202EnterKernel(UINT64 Entry, UINT64 Dtb);
 EFI_STATUS LinuxStopWatchdog(VOID);
@@ -114,7 +116,7 @@ STATIC EFI_STATUS PrepareDisplay(VOID *Dtb,INT32 Chosen,EFI_SYSTEM_TABLE *System
   EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *Info; UINT32 V[20]; fdt32_t Cells[20];
   INT32 Logo,Length; CONST UINT8 *Reg; UINTN I;
   /* Never reuse a stale LK record when there is no current page request. */
-  INT32 R=fdt_delprop(Dtb,Chosen,PJB_DISPLAY_PROPERTY);
+  INT32 R=fdt_delprop(Dtb,Chosen,PJ4EDK2_DISPLAY_PROPERTY);
   if (R && R!=-FDT_ERR_NOTFOUND) return EFI_VOLUME_CORRUPTED;
   CopyMem(&Guid,&WireGuid,sizeof(Guid));
   for (I=0;I<System->NumberOfTableEntries;++I)
@@ -141,27 +143,28 @@ STATIC EFI_STATUS PrepareDisplay(VOID *Dtb,INT32 Chosen,EFI_SYSTEM_TABLE *System
   Reg=fdt_getprop(Dtb,Logo,"reg",&Length);
   if (!Reg || Length!=16 || Be64(Reg)!=0xb0000000 || Be64(Reg+8)!=0x9e4000)
     return EFI_NO_MAPPING;
-  if (!pjb_display_encode_be(V,PJB_DISPLAY_CELLS,Cells,sizeof(Cells)))
+  if (!pj4edk2_display_encode_be(V,PJ4EDK2_DISPLAY_CELLS,Cells,sizeof(Cells)))
     return EFI_UNSUPPORTED;
   /* Property insertion may move /chosen after /reserved-memory. */
   Chosen=fdt_path_offset(Dtb,"/chosen");
-  if (fdt_setprop(Dtb,Chosen,PJB_DISPLAY_PROPERTY,Cells,sizeof(Cells))) return EFI_VOLUME_CORRUPTED;
+  if (fdt_setprop(Dtb,Chosen,PJ4EDK2_DISPLAY_PROPERTY,Cells,sizeof(Cells))) return EFI_VOLUME_CORRUPTED;
   DEBUG((DEBUG_WARN,"LINUX_EFI display=%ux%u rect=%u,%u,%u,%u\n",V[10],V[11],V[12],V[13],V[14],V[15]));
   return EFI_SUCCESS;
 }
 STATIC EFI_STATUS PrepareDtb(CONST VOID *Source,UINT64 InitrdBytes,EFI_SYSTEM_TABLE *System,
-                             CONST UINT64 Times[5],UINT64 PrepareStarted) {
+                             CONST UINT64 Times[5],UINT64 PrepareStarted,CONST CHAR8 *RootPartuuid) {
   VOID *Dtb=(VOID *)(UINTN)LINUX_DTB_BASE; INT32 Chosen,Result; UINTN I;
   fdt64_t LoadTimes[6]; unsigned long long InitrdEnd;
   CONST CHAR8 *Drop[]={"kaslr-seed","rng-seed","linux,uefi-system-table","linux,uefi-mmap-start",
     "linux,uefi-mmap-size","linux,uefi-mmap-desc-size","linux,uefi-mmap-desc-ver"};
-  if (!pjb_linux_initrd_range(LINUX_INITRD_BASE,InitrdBytes,&InitrdEnd))
+  if (!pj4edk2_linux_initrd_range(LINUX_INITRD_BASE,InitrdBytes,&InitrdEnd))
     return EFI_INVALID_PARAMETER;
   if (fdt_open_into(Source,Dtb,(INT32)LINUX_DTB_CAPACITY)) return EFI_VOLUME_CORRUPTED;
   Chosen=fdt_path_offset(Dtb,"/chosen"); if (Chosen<0) return EFI_NOT_FOUND;
   if (fdt_setprop_u64(Dtb,Chosen,"linux,initrd-start",LINUX_INITRD_BASE) ||
       fdt_setprop_u64(Dtb,Chosen,"linux,initrd-end",InitrdEnd) ||
-      fdt_setprop_string(Dtb,Chosen,"w202,uefi-profile",PROFILE)) return EFI_VOLUME_CORRUPTED;
+      fdt_setprop_string(Dtb,Chosen,"w202,uefi-profile",PROFILE) ||
+      fdt_setprop_string(Dtb,Chosen,PJ4EDK2_ROOT_PROPERTY,RootPartuuid)) return EFI_VOLUME_CORRUPTED;
   // This pinned kernel forces its own command line; root selection is in initrd.
   for (I=0;I<ARRAY_SIZE(Drop);++I) {
     Result=fdt_delprop(Dtb,Chosen,Drop[I]);
@@ -215,6 +218,7 @@ EFI_STATUS EFIAPI UefiMain(EFI_HANDLE Image,EFI_SYSTEM_TABLE *System) {
   EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *Fs; EFI_FILE_PROTOCOL *Root=NULL,*Boot=NULL,*File=NULL;
   EFI_STATUS Status; UINT64 El,Bytes=0,BootBytes=0,Started=GetPerformanceCounter();
   UINT64 PhaseStarted=Started,Times[5];
+  CHAR8 RootPartuuid[37];
   UINT8 Header[4096],Kernel[64],Meta[32]; UINT32 KBytes,RBytes,DBytes;
   VOID *Dtb=NULL; LINUX_IMAGE Layout; CONST CHAR8 *Phase="esp";
   DEBUG((DEBUG_WARN,"LINUX_EFI begin profile=%a\n",PROFILE));
@@ -226,6 +230,11 @@ EFI_STATUS EFIAPI UefiMain(EFI_HANDLE Image,EFI_SYSTEM_TABLE *System) {
       !CompareGuid(&Part->Info.Gpt.PartitionTypeGUID,&gEfiPartTypeSystemPartGuid)) { Status=EFI_NO_MAPPING; goto Done; }
   Status=gBS->HandleProtocol(Loaded->DeviceHandle,&gEfiSimpleFileSystemProtocolGuid,(VOID **)&Fs); if (EFI_ERROR(Status)) goto Done;
   Status=Fs->OpenVolume(Fs,&Root); if (EFI_ERROR(Status)) goto Done;
+  Phase="root-partuuid"; Status=Open(Root,ROOT_PATH,&File,&Bytes); if (EFI_ERROR(Status)) goto Done;
+  if (Bytes!=36) { Status=EFI_VOLUME_CORRUPTED; goto Done; }
+  Status=Read(File,0,Bytes,RootPartuuid); File->Close(File); File=NULL; if (EFI_ERROR(Status)) goto Done;
+  if (!pj4edk2_linux_partuuid_valid(RootPartuuid,36)) { Status=EFI_VOLUME_CORRUPTED; goto Done; }
+  RootPartuuid[36]=0;
   Phase="manifest"; Status=Open(Root,META_PATH,&File,&Bytes); if (EFI_ERROR(Status)) goto Done;
   if (Bytes!=sizeof(Meta)) { Status=EFI_VOLUME_CORRUPTED; goto Done; }
   Status=Read(File,0,Bytes,Meta); File->Close(File); File=NULL; if (EFI_ERROR(Status)) goto Done;
@@ -253,7 +262,7 @@ EFI_STATUS EFIAPI UefiMain(EFI_HANDLE Image,EFI_SYSTEM_TABLE *System) {
   Status=Crc((VOID *)(UINTN)LINUX_INITRD_BASE,RBytes,ReadUnaligned32((UINT32 *)(Meta+24))); if (EFI_ERROR(Status)) goto Done;
   if (*(volatile UINT32 *)(UINTN)LINUX_INITRD_BASE!=0x184c2102) { Status=EFI_UNSUPPORTED; goto Done; }
   Times[4]=PhaseUs(&PhaseStarted);
-  Phase="prepare"; Status=PrepareDtb(Dtb,RBytes,System,Times,PhaseStarted); if (EFI_ERROR(Status)) goto Done;
+  Phase="prepare"; Status=PrepareDtb(Dtb,RBytes,System,Times,PhaseStarted,RootPartuuid); if (EFI_ERROR(Status)) goto Done;
   Boot->Close(Boot); Boot=NULL; Root->Close(Root); Root=NULL; FreePool(Dtb); Dtb=NULL;
   DEBUG((DEBUG_WARN,"LINUX_EFI ready profile=%a kernel=%u initrd=%u entry=%lx elapsed_ms=%Lu\n",PROFILE,KBytes,RBytes,Layout.Entry,GetTimeInNanoSecond(GetPerformanceCounter()-Started)/1000000));
   Phase="entry"; Status=ExitToKernel(Image,Layout.Entry);
