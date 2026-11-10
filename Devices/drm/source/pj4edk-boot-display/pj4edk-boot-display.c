@@ -191,10 +191,11 @@ static void pj4edk_boot_display_console_release(void)
 
 static int __init pj4edk_console_init(void)
 {
-	const __be32 *property, *reg;
+	const void *property;
+	const __be32 *reg;
 	struct memblock_region *r;
 	u32 v[20];
-	int chosen, logo, length, i;
+	int chosen, logo, length;
 	bool reserved = false;
 
 	if (!initial_boot_params)
@@ -202,11 +203,9 @@ static int __init pj4edk_console_init(void)
 	chosen = fdt_path_offset(initial_boot_params, "/chosen");
 	if (chosen < 0)
 		return 0;
-	property = fdt_getprop(initial_boot_params, chosen, "pocketjs,boot-display", &length);
-	if (!property || length != sizeof(v))
+	property = fdt_getprop(initial_boot_params, chosen, PJB_DISPLAY_PROPERTY, &length);
+	if (!property || !pjb_display_decode_be(property, length, v))
 		return 0;
-	for (i = 0; i < ARRAY_SIZE(v); i++)
-		v[i] = be32_to_cpu(property[i]);
 	logo = fdt_path_offset(initial_boot_params, "/reserved-memory/logobuffer@b0000000");
 	if (logo < 0 || fdt_getprop(initial_boot_params, logo, "no-map", NULL) ||
 	    fdt_getprop(initial_boot_params, logo, "reusable", NULL))

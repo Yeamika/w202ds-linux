@@ -7,6 +7,8 @@
 #ifndef PJ4EDK_BOOT_DISPLAY_CORE_H
 #define PJ4EDK_BOOT_DISPLAY_CORE_H
 
+#include "common/include/pjb_boot_display.h"
+
 #define PJ4EDK_COLS 160
 #define PJ4EDK_ROWS 50
 #define PJ4EDK_CELL_W 12
@@ -47,15 +49,13 @@ static int pj4edk_terminal_init(struct pj4edk_terminal *t, const unsigned int *v
 {
 	unsigned int right, bottom, i, j;
 
-	if (v[0] != 1 || v[1] != 2 || v[2] || v[3] != 0xb0000000 ||
+	if (!pjb_display_validate_cells(v, PJB_DISPLAY_CELLS) ||
+	    v[2] || v[3] != 0xb0000000 ||
 	    v[4] != 0x9e4000 || v[5] != 4608000 || v[6] != 1200 ||
-	    v[7] != 1920 || v[8] != 2400 || v[9] != 1 ||
+	    v[7] != 1920 || v[8] != 2400 ||
 	    !((v[10] == 1280 && v[11] == 800) ||
 	      (v[10] == 1920 && v[11] == 1200)) || v[16] != 90 ||
-	    v[17] != 180 || v[18] != 2 || v[19] != 1 ||
-	    v[12] > v[10] || v[13] > v[11] ||
-	    v[14] > v[10] - v[12] || v[15] > v[11] - v[13] ||
-	    v[14] < 128 || v[15] < 80)
+	    v[17] != 180 || v[14] < 128 || v[15] < 80)
 		return -1;
 	/* Inset eight native pixels, leaving the PJ4EDK frame and its border. */
 	t->left = (v[12] * 1920 + v[10] - 1) / v[10] + 8;
