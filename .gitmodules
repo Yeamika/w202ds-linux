@@ -7,6 +7,6 @@
 	url = https://github.com/Yeamika/pj4edk2.git
 	branch = uefi
 [submodule "pj4edk2-linux-efi"]
-	path = pocketjs4edk2_uefi/components/pj4edk2-linux-efi
+	path = pocketjs4edk2_uefi/efi/LinuxBoot/common
 	url = https://github.com/Yeamika/pj4edk2.git
 	branch = linux-efi

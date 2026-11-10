@@ -31,3 +31,13 @@ Server分阶段启动已进入真实 `/dev/mmcblk0p78` ext4根（`server-2026102
 ## 来源
 
 EFI 文件访问与生命周期采用项目内 EDK II 协议。原始 ARM64 交接基于本项目 AndroidBoot 的已测试交接例程；PMIC ADI 事务参照本项目 BoardServicesDxe 和原厂 LK 的 UMP9620 看门狗定义。
+
+## 公共层归属
+
+本目录继续作为唯一 W202DS Linux EFI 加载器。内部的 [common](common/README.md)
+固定 pj4edk2 `linux-efi` 分支；远程通过 gitlink 固定提交，本地为相对符号链接。
+不会在 components 下再建立另一套 Linux EFI 实现。
+
+拆分方案见 [common/ABSTRACTION.md](common/ABSTRACTION.md)：公共镜像/DT/显示协议
+处理逐步抽出；ESP 与启动策略、加载布局、GOP/DPU、PMIC 看门狗及硬件交接留在此项目。
+当前 common 仅有初始化 MD，INF 与 C 源码尚未改为调用公共实现，现有加载器行为不变。
