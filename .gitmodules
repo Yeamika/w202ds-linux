@@ -5,4 +5,4 @@
 [submodule "pj4edk2-linux-boot-display"]
 	path = components/pj4edk2-linux-boot-display
 	url = https://github.com/Yeamika/pj4edk2.git
-	branch = pj4edk2-linux-boot-display
+	branch = kernel-boot-display
