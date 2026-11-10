@@ -1,0 +1,41 @@
+# SPDX-License-Identifier: BSD-2-Clause-Patent
+[Defines]
+  INF_VERSION = 0x0001001B
+  BASE_NAME = DebianServer
+  FILE_GUID = afc3b19a-5d2d-47e4-a112-3e491a020cef
+  MODULE_TYPE = UEFI_APPLICATION
+  VERSION_STRING = 0.1
+  ENTRY_POINT = UefiMain
+[Sources]
+  LinuxBoot.c
+  LinuxImage.c
+  LinuxImage.h
+  LinuxDisplay.h
+  LinuxHandoff.c
+  EnterKernel.S
+[Packages]
+  MdePkg/MdePkg.dec
+  MdeModulePkg/MdeModulePkg.dec
+  ArmPkg/ArmPkg.dec
+  EmbeddedPkg/EmbeddedPkg.dec
+[LibraryClasses]
+  UefiApplicationEntryPoint
+  UefiBootServicesTableLib
+  MemoryAllocationLib
+  BaseLib
+  BaseMemoryLib
+  ArmLib
+  IoLib
+  DebugLib
+  FdtLib
+  TimerLib
+[Protocols]
+  gEfiGraphicsOutputProtocolGuid
+  gEfiLoadedImageProtocolGuid
+  gEfiPartitionInfoProtocolGuid
+  gEfiSimpleFileSystemProtocolGuid
+[Guids]
+  gEfiPartTypeSystemPartGuid
+  gEfiFileInfoGuid
+[BuildOptions]
+  GCC:*_*_AARCH64_CC_FLAGS = -DW202_LINUX_SERVER

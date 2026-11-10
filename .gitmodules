@@ -1,0 +1,12 @@
+[submodule "edk2-ums9620"]
+	path = pocketjs4edk2_uefi/components/edk2-ums9620
+	url = https://github.com/Yeamika/edk2-ums9620.git
+	branch = main
+[submodule "pj4edk2"]
+	path = pocketjs4edk2_uefi/components/pj4edk2
+	url = https://github.com/Yeamika/pj4edk2.git
+	branch = uefi
+[submodule "pj4edk2-linux-efi"]
+	path = pocketjs4edk2_uefi/efi/LinuxBoot/common
+	url = https://github.com/Yeamika/pj4edk2.git
+	branch = linux-efi

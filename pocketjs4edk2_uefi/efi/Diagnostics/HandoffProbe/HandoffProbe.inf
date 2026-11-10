@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: BSD-2-Clause-Patent
+[Defines]
+  INF_VERSION = 0x0001001B
+  BASE_NAME = HandoffProbe
+  FILE_GUID = b96b5902-cc41-4f67-9b6d-e33f58bbc62d
+  MODULE_TYPE = UEFI_APPLICATION
+  VERSION_STRING = 0.1
+  ENTRY_POINT = ProbeMain
+[Sources]
+  HandoffProbe.c
+[Packages]
+  MdePkg/MdePkg.dec
+[LibraryClasses]
+  UefiApplicationEntryPoint
+  UefiBootServicesTableLib
+  BaseMemoryLib
+  MemoryAllocationLib
+  SerialPortLib
+  BaseLib
+[Protocols]
+  gEfiLoadedImageProtocolGuid

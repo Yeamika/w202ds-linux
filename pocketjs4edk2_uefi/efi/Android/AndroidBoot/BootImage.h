@@ -1,0 +1,21 @@
+// SPDX-License-Identifier: BSD-2-Clause-Patent
+#ifndef W202_BOOT_IMAGE_H
+#define W202_BOOT_IMAGE_H
+#include <Uefi.h>
+#define W202_OS_INITRD_BASE 0xd0000000ULL
+#define W202_OS_INITRD_CAPACITY 0x04000000ULL
+#define W202_OS_KERNEL_BASE 0xd4000000ULL
+#define W202_OS_KERNEL_CAPACITY 0x04000000ULL
+#define W202_OS_DTB_BASE 0xd8000000ULL
+#define W202_OS_DTB_CAPACITY 0x00200000ULL
+typedef struct {
+  UINT64 KernelOffset, KernelBytes, RamdiskOffset, RamdiskBytes;
+} W202_BOOT_IMAGE;
+typedef struct {
+  UINT64 RamdiskOffset, RamdiskBytes, TableOffset;
+} W202_VENDOR_IMAGE;
+typedef struct { UINT64 Entry, MemoryBytes; } W202_KERNEL_IMAGE;
+EFI_STATUS W202ParseBoot(CONST UINT8 *, UINTN, UINT64, W202_BOOT_IMAGE *);
+EFI_STATUS W202ParseVendor(CONST UINT8 *, UINTN, UINT64, W202_VENDOR_IMAGE *);
+EFI_STATUS W202ParseKernel(CONST UINT8 *, UINTN, UINT64, W202_KERNEL_IMAGE *);
+#endif

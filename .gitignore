@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+output/
+*.img
+*.bin
+!tests/fixtures/*
+
+# Local project links and build output inside pocketjs4edk2_uefi; see README.
+/pocketjs4edk2_uefi/edk2-ums9620
+/pocketjs4edk2_uefi/pj4edk2
+/pocketjs4edk2_uefi/ui
+/pocketjs4edk2_uefi/lk
+/pocketjs4edk2_uefi/build/
