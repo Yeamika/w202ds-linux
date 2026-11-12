@@ -1,7 +1,7 @@
 # PocketJS4EDK2 UEFI 组合层
 
 本目录是 `w202ds-boot` 的组合构建项目：把 W202DS 的 EDK II 平台、PocketJS
-运行时和 ESP 启动器组合成完整 B 槽引导镜像。仓库根目录只保留本项目与
+运行时和 ESP 启动器组合成完整 B 槽引导镜像。仓库根目录另有 `components/`、`tool/` 与
 `lk/`；`lk/` 存放 LK 侧桥接、原厂 LK 参考和后续板级 LK 材料，当前重组未改动
 其中内容。
 
@@ -11,9 +11,6 @@
 pocketjs4edk2_uefi/
 ├── build.py                 # 组合构建入口
 ├── config/                  # 板级 PocketJS 配置
-├── components/              # 远端为 Git 子模块，本地同路径为链接
-│   ├── edk2-ums9620 -> ../../../edk2-ums9620
-│   └── pj4edk2 -> ../../../pj4edk2
 ├── efi/                     # 独立构建的 ESP 启动器与诊断应用
 │   ├── Android/AndroidBoot/
 │   ├── Android/AndroidLk/
@@ -24,7 +21,7 @@ pocketjs4edk2_uefi/
 │   └── build-efi.sh
 ├── tests/                   # 组合层与 EFI 源码测试
 ├── tools/                   # SDK 导出、最终链接、RAMBoot 工具
-├── inputs.lock.json         # LK 底包、设置区、触控固件哈希
+├── inputs.lock.json         # LK 底包哈希与 ESP 设置约定
 ├── test.py                  # 针对完整构建的 ARM64 Unicorn 测试
 ├── ui -> ../../pj4edk2/default-ui        # 可选默认 UI 链接
 ├── lk -> ../lk                          # 当前板级 LK 桥接
@@ -43,7 +40,7 @@ pocketjs4edk2_uefi/
 | [`w202ds-boot`](https://github.com/Yeamika/w202ds-boot) | LK 桥接、组合构建、最终链接、RAMBoot 包装、5 MiB LK 容器封装、ESP 布局 |
 | `w202ds-linux` | Linux 内核、设备树、模块、硬件固件及 Linux 集成 |
 
-`edk2-ums9620` 与 `pj4edk2` 在 `components/` 下登记为 Git 子模块，URL
+`edk2-ums9620` 与 `pj4edk2` 在仓库根目录的 `components/` 下登记为 Git 子模块，URL
 指向 GitHub，父仓库记录固定提交。远端克隆使用真实子模块；本地开发在**同一
 路径**使用指向并排仓库的符号链接，不额外建立组件副本。构建清单记录实际
 读取的源码提交与文件哈希。`w202ds-linux` 由外部提供。
@@ -81,27 +78,27 @@ git submodule update --init
 `w202ds-boot` 根目录执行：
 
 ```sh
-mkdir -p pocketjs4edk2_uefi/components
+mkdir -p components
 # 全新 clone 可能留下空的子模块目录，先用 rmdir 移除；不要删除有内容的目录。
-rmdir pocketjs4edk2_uefi/components/edk2-ums9620 pocketjs4edk2_uefi/components/pj4edk2
-ln -s ../../../edk2-ums9620 pocketjs4edk2_uefi/components/edk2-ums9620
-ln -s ../../../pj4edk2 pocketjs4edk2_uefi/components/pj4edk2
-git update-index --skip-worktree pocketjs4edk2_uefi/components/edk2-ums9620 pocketjs4edk2_uefi/components/pj4edk2
+rmdir components/edk2-ums9620 components/pj4edk2
+ln -s ../../edk2-ums9620 components/edk2-ums9620
+ln -s ../../pj4edk2 components/pj4edk2
+git update-index --skip-worktree components/edk2-ums9620 components/pj4edk2
 ln -s ../../pj4edk2/default-ui pocketjs4edk2_uefi/ui
 ```
 
 若子模块已初始化，先确认两个 checkout 没有未提交修改，再执行
-`git submodule deinit -- pocketjs4edk2_uefi/components/edk2-ums9620 pocketjs4edk2_uefi/components/pj4edk2`，
+`git submodule deinit -- components/edk2-ums9620 components/pj4edk2`，
 然后替换清空的目录。`skip-worktree` 仅保存在本机索引，避免 `git add -A`
 把链接替换成模式 `120000`；仓库记录仍须为 `160000`，可用
-`git ls-files --stage pocketjs4edk2_uefi/components` 核对。
+`git ls-files --stage components` 核对。
 
 本地链接模式下不要执行 `git submodule update`。切回真实子模块时，先对两个
 路径执行 `git update-index --no-skip-worktree`，用 `unlink` 移除这两个链接，
 再执行 `git submodule update --init`。更新固定提交时需显式更新 gitlink；链接
 目标的 HEAD 不会自动改变父仓库记录的提交。
 
-`build.py` 优先使用 `components/<name>`（链接或真实子模块均可），兼容旧布局
+`build.py` 优先使用仓库根目录的 `components/<name>`（链接或真实子模块均可），兼容旧布局
 链接，最后回退到 `pushup/<name>` 并排 checkout。`--edk2`、`--pocketjs` 始终可
 显式选择其他仓库。`ui` 和 `lk` 本地链接由 `.gitignore` 忽略。
 
@@ -134,12 +131,57 @@ GCC/binutils，以及 `pj4edk2` 声明的 Rust 工具链。两个组件仓库各
 
 ```sh
 python3 pocketjs4edk2_uefi/build.py --output /path/to/build/w202ds \
-  --lk-baseline /path/to/inputs/uboot-b-pjs-ram-v2.img \
-  --settings-image /path/to/inputs/settings-source.img \
-  --touch-firmware ../w202ds-linux/6.18.35/Devices/touchscreen/firmware/Himax_firmware_guoxian.bin
+  --lk-baseline /path/to/inputs/lk-jump-rmk.img
 ```
 
 也可以 `cd pocketjs4edk2_uefi` 后使用同样的参数运行 `python3 build.py ...`。
+
+默认 `--fastboot` 将无显示 LK 轮询服务与板级协议一起构建；`--no-fastboot` 同时禁用两端。
+基础 LK 的屏幕补丁始终关闭，PJ4EDK2 保持显示所有权。支持版本/分区查询、128 MiB 内的 raw 下载、
+显式 `_a/_b` 全分区写入与读回、重启；ESP 和 sparse 不支持。`continue` 保持菜单可操作，启动项由菜单选择。
+此组合尚待板上 USB 与菜单同时运行的验收；本地 SDK 测试不代表已经刷入设备。
+
+要构建包含 LK 调试恢复能力的组合镜像，使用自动生成的底包并加 `--lk-debug`：
+
+```sh
+python3 pocketjs4edk2_uefi/build.py \
+  --output /path/to/build/w202ds-lk-debug --lk-debug
+```
+
+该选项启用 RAM 模块执行看门狗、LK USB 恢复与完整 raw 分区写入和读回校验；LK 屏幕补丁保持关闭，
+UEFI 菜单中的 Fastboot 服务默认开启。常驻组合会把正常/外部复位交给 PJ4EDK2；LK 原生 Fastboot
+用于恢复模式、resident 失败恢复和 bootloader 复位请求。它只控制自动生成的 LK 底包；传入 `--lk-baseline`
+时，构建会检查看门狗、USB 恢复、SDK RAMBoot、raw 刷写和屏幕关闭等功能位，不匹配就拒绝封装。
+构建清单会记录 LK 功能位。组合固件构建不会操作设备。
+输出目录同时包含 `lk-debug-tools/`：与该组合匹配的 standalone `lk-debuger.img`、
+RAM 读取模块、看门狗 smoke/hang 探针和 `read.py`，不包含屏幕探针。进入 LK Fastboot 后读取 trace：
+
+```sh
+python3 <build-output>/lk-debug-tools/read.py --serial <serial> \
+  --module <build-output>/lk-debug-tools/ramboot-memory.bin \
+  --output /path/to/new/ram-read
+```
+
+调试镜像的 RAM 读取工具可独立生成：
+
+```sh
+python3 lk/legacy-buildchain/build.py \
+  --output /path/to/build/lk-debug-tools --debug --no-screen
+```
+
+该输出包含 `ramboot-memory.bin`；从 PJ4EDK2 请求 `reboot-bootloader` 并进入 LK Fastboot 后，可用
+`lk/legacy-buildchain/debug/read.py` 读取默认 `0x82ffe000` 起的 8 KiB RAM trace。该复位路径仍需在
+当前组合镜像上做实机确认。
+
+启动痕迹保存在 RAM。构建输出 `ramboot-uefi.bin`，可用已安装的 RAMBoot LK 和 Android SDK Fastboot 运行完整 UEFI：
+
+```sh
+fastboot -s <serial> stage /path/to/build/w202ds/ramboot-uefi.bin
+fastboot -s <serial> oem jump-rmk :probe
+fastboot -s <serial> oem jump-rmk :init
+```
+
+`:probe` 校验封装后返回；`:init` 运行真实 FD，并保留约 30 秒的恢复窗口以读取 RAM trace。使用 `:resident` 启动正常常驻流程，由平台在运行时续看门狗。故障复位回 Fastboot 后，可用 LK 的 `debug/read.py` 读取交接页和内存日志。
 
 `--output` 必须是位于本仓库、两个组件仓库和 UI 目录之外的新目录。`--edk2`、
 `--pocketjs` 可指定另外两个仓库；`--jobs` 控制并行度。构建先生成私有
@@ -148,11 +190,16 @@ BaseTools，再构建运行时、平台、ESP 加载器、最终 FD、桥接和 
 
 - `platform/workspace/Build/Ums9620/RELEASE_GCC5/FV/` — 平台 FV；
 - `efi/bin/` — 本次编译的六个 EFI；
-- `link-sdk/`、`w202ds.fd`、`ramboot.img`；
+- `link-sdk/`、`w202ds.fd`、`ramboot.img`、`ramboot-uefi.bin`；
 - `resident/uboot-b-uefi.img`；
 - `ESP/EFI/{Android,DebianServer,DebianKDE}/bootaa64.efi`；
 - `ESP/EFI/Tools/{AndroidBoot,HandoffProbe,TouchScope}.efi`；
 - `efi/efi-build.json` — EFI 源码、公共 ABI、构建模式和二进制哈希；
+
+部署是一组产物：更新 `resident/uboot-b-uefi.img` 不会更新 ESP。
+必须配套安装同一构建的 `ESP/EFI/` 加载器，并逐文件读回核对 `manifest.json`
+中的哈希，保留现有配置、设置及系统文件。仅确认 B 分区哈希一致，不能证明
+Android/Linux 启动加载器已经更新；构建成功也不等于整套部署完成。
 - `manifest.json` — 源码提交、输入与产物哈希。
 
 使用外部默认 UI 时加 `--default-ui /path/to/my-project/ui`，此目录遵循
@@ -218,16 +265,15 @@ bash pocketjs4edk2_uefi/efi/build-efi.sh \
 
 ## 为什么还需要 LK 底包
 
-底包是版本固定的 W202DS LK **二进制** `uboot-b-pjs-ram-v2.img`，不是另一个
-源码工程。本流程重编译 `lk/ramboot` 中的桥接/加载器，再补入该底包。完整上游
+底包是版本固定的 W202DS LK **二进制** `lk-jump-rmk.img`，不是另一个
+源码工程。本流程重编译 `lk/legacy-buildchain/ramboot` 中的桥接/加载器，再补入该底包。完整上游
 LK 源码来自 `sprd-linux/lk`，但目前没有经过验证、能从该完整源码树重建这个
 底包的流程。
 
 因此 `w202ds-boot/lk` 保存实际使用的桥接源码、原厂 LK 参考和后续要接入的
 板级 LK 代码；本组合项目只通过 `lk` 链接使用其中的 `ramboot`。二进制输入由
 调用者明确提供；名称、用途、尺寸和 SHA-256 见
-[inputs.lock.json](inputs.lock.json)。底包哈希不匹配会拒绝封装。设置镜像用于
-保留末尾两份 PJB 设置区，需与相同底包兼容。
+[inputs.lock.json](inputs.lock.json)。底包哈希不匹配会拒绝封装。启动设置由运行时保存到 ESP 文件，不依赖分区尾部数据。
 
 ## 底层工具
 
@@ -242,8 +288,8 @@ PYTHONDONTWRITEBYTECODE=1 python3 test.py --build /path/to/build/w202ds
 读取失败、显示/按键异常和返回上下文；MMIO、GIC 等硬件行为仍由测试模型提供。
 
 `tools/edk2_sdk.py` 提供平台 SDK 导出、最终链接和验证；`tools/mkramboot.py`
-检查 SEC 重定位并包装 FD；`lk/ramboot/package-resident.py` 检查底包、容量、
-不可变区域及设置区。`lk/ramboot/tests/` 保留 ARM64 Unicorn 桥接测试；所需输入
+检查 SEC 重定位并包装 FD；`lk/legacy-buildchain/ramboot/package-resident.py` 检查底包、容量、
+不可变区域及载荷后的空白区域。`lk/legacy-buildchain/ramboot/tests/` 保留 ARM64 Unicorn 桥接测试；所需输入
 通过测试中的环境变量显式提供。
 
 ## 迁移后的离线验收
@@ -261,7 +307,7 @@ python3 -m unittest discover -s pocketjs4edk2_uefi/tests -p test_efi_host.py -v
 启动包），再分别运行 `test_android_boot.py`、`test_linux_boot.py`。
 这些回归测试检查特定捕获输入，不能替代其他版本镜像兼容性或设备验收。
 
-`AndroidLk` 直接使用平台的 `Ums9620Pkg/Include/LkReturn.h`，与 LK 桥接共用
+`AndroidLk` 直接使用平台的 `Ums9620Pkg/W202ds/Include/LkReturn.h`，与 LK 桥接共用
 同一份 ABI。独立 EFI 构建支持 `W202_ANDROID_BOOT_ENTER=TRUE`（直接 Android
 实验）和 `W202_LK_RETURN_PROBE_ONLY=TRUE`（仅恢复 LK 探针）；默认均为 FALSE。
 迁移后不再通过平台宏把应用嵌入 FV，旧的直接启动宏会在平台构建时明确拒绝。
@@ -272,9 +318,28 @@ python3 -m unittest discover -s pocketjs4edk2_uefi/tests -p test_efi_host.py -v
 ## 由 REIMUKS 选择构建
 
 本地 `pocketjs4edk2_uefi/build-firmware.py` 是 REIMUKS 的板级适配器：
-接收 `--stage all|uefi|efi`、`--output`、`--kernel-source`、`--jobs`，
+接收 `--stage all|uefi|efi`、`--output`、`--kernel-source`、`--jobs`、`--inputs`，
 使用本工程组件链接构建完整 PocketJS FD 和/或独立 ESP 应用。
-不需要 LK 底包或设置区，不组装 5 MiB 刷写容器，也不操作设备。
+`uefi`（及 `all`）默认从 `lk/firmware/uboot-mod.bin` 生成 RAMLK，也可用
+`--inputs /path/to/inputs.json` 覆盖，通过与 `build.py` 共用的
+`tools/lk_container.py` 封装 `resident/uboot-b-uefi.img`，为完整 5 MiB `uboot_b`
+分区镜像。仅 `efi` 无需 LK 输入。配置格式为：
+
+```json
+{"schema": 1, "board": "w202ds", "lk_baseline": "/path/to/lk-jump-rmk.img"}
+```
+
+相对路径以配置文件所在目录为基准。底包哈希与布局在编译前校验，
+`firmware-manifest.json` 的 `partition_images.uboot_b` 记录输出信息，
+`packaging_inputs` 记录输入哈希。镜像为待真机验证的候选产物，构建不操作设备。
 调用前显式提供本地工具链 PATH 与 EDK_TOOLS_PATH；输出目录必须是源码树外的新目录。
 REIMUKS 的板级配置通过 `devices/w202ds/board.json` 指向此适配器，
 公开 rootfs 名为 desktop/server 与 desktop/kde；旧 DebianServer/DebianKDE ESP 路径保留。
+
+启动设置位于 ESP 的 `EFI/BOOT/pj4edk/settings0.bin` 和 `settings1.bin`，由运行时按需创建。没有有效设置时使用嵌入默认值；固件封装不再读取或复制旧尾部 bank。
+
+菜单配置位于 `EFI/BOOT/pj4edk/config.json`：首次缺失时扫描
+`EFI/<系统>/BOOTAA64.EFI` 并保存，之后直接读取。设置页的
+“Reload boot list” 可主动重新扫描并保存；倒计时支持 0–99 秒，0 为关闭，
+可通过 3×4 数字键盘输入。读取失败或文件损坏时保留原文件并关闭自动启动。
+此目录不包含默认回退 EFI 程序。

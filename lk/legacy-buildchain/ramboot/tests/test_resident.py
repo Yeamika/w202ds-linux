@@ -63,6 +63,7 @@ class ResidentTest(unittest.TestCase):
         u.reg_write(UC_ARM64_REG_X19,mode)
         u.reg_write(UC_ARM64_REG_SP,0xb5e00000)
         u.reg_write(UC_ARM64_REG_LR,END)
+        storage = bytearray(self.flash)
         state = dict(reads=[],writes=[],watchdogs=[],display=[],native=[],entry=False,fastboot=False,
                      cleanup=False,pmic={0x644223ac:0x1200,0x64420284:0x0b})
 
@@ -75,13 +76,15 @@ class ResidentTest(unittest.TestCase):
                            [UC_ARM64_REG_X0,UC_ARM64_REG_X1,UC_ARM64_REG_X2,UC_ARM64_REG_X3])
             if pc==0xb50405ec:
                 self.assertEqual(bytes(uc.mem_read(x0,8)),b'uboot_b\0')
-                self.assertEqual(x3,BASE)
-                self.assertEqual(x2,0x228000)
                 state['reads'].append((x1,x2,x3))
-                payload=bytearray(self.flash[x2:x2+x1])
+                payload=bytearray(storage[x2:x2+x1])
+                self.assertEqual(x2,0x228000)
+                self.assertEqual(x3,BASE)
                 if corrupt: payload[0x11000]^=1
                 if not io_fail: uc.mem_write(x3,bytes(payload))
                 ret(-1 if io_fail else 0)
+            elif pc==0xb503f5d0:
+                self.fail('resident boot attempted a storage write')
             elif pc==0xb50932a0:
                 # Execute the real pinned stop_watchdog body. This is not a
                 # board-setup no-op: it clears the PMIC counter-enable bit.
@@ -139,7 +142,7 @@ class ResidentTest(unittest.TestCase):
             elif pc==native: state['native'].append(pc);ret()
             elif pc==0xb5006674: uc.reg_write(UC_ARM64_REG_PC,END)
 
-        for addr in set([0xb50405ec,0xb50932a0,0xb5086e5c,0xb5089bfc,0xb50035a4,
+        for addr in set([0xb50405ec,0xb503f5d0,0xb50932a0,0xb5086e5c,0xb5089bfc,0xb50035a4,
                          0xb508868c,0xb5033434,0xb50335a4,0xb5089168,
                          0xb506ce54,0xb506cf70,0xb506d0dc,0xb5093220,0xb500b904,0xb5004dc0,
                          0xb5035e94,0xb5035c78,0xb500e11c,0xb5006674,0xb5012a80,native]):

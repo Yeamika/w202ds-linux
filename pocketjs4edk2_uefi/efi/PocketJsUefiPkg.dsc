@@ -14,6 +14,7 @@
 !include MdePkg/MdeLibs.dsc.inc
 [BuildOptions]
   GCC:*_*_AARCH64_CC_FLAGS = -fno-jump-tables -ffixed-x18 -I"$(PJB_BOOT_ABI_INCLUDE)" -I"$(W202_PLATFORM_INCLUDE)"
+  GCC:*_*_AARCH64_PP_FLAGS = -I"$(W202_PLATFORM_INCLUDE)"
   GCC:*_*_AARCH64_CC_XIPFLAGS == -mstrict-align
 !if $(W202_ANDROID_BOOT_ENTER) == TRUE
   GCC:*_*_AARCH64_CC_FLAGS = -DW202_ANDROID_BOOT_ENTER
@@ -36,7 +37,7 @@
   MemoryAllocationLib|MdePkg/Library/UefiMemoryAllocationLib/UefiMemoryAllocationLib.inf
   PcdLib|MdePkg/Library/DxePcdLib/DxePcdLib.inf
   PrintLib|MdePkg/Library/BasePrintLib/BasePrintLib.inf
-  SerialPortLib|Ums9620Pkg/Library/RamTraceSerialPortLib/RamTraceSerialPortLib.inf
+  SerialPortLib|Ums9620Pkg/W202ds/Library/RamTraceSerialPortLib/RamTraceSerialPortLib.inf
   SynchronizationLib|MdePkg/Library/BaseSynchronizationLib/BaseSynchronizationLib.inf
   TimerLib|ArmPkg/Library/ArmArchTimerLib/ArmArchTimerLib.inf
   UefiApplicationEntryPoint|MdePkg/Library/UefiApplicationEntryPoint/UefiApplicationEntryPoint.inf

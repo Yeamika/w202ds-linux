@@ -50,6 +50,9 @@ class ReturnTest(unittest.TestCase):
         system=dict(original)
         events=[]
 
+        def trace_stage():
+            return struct.unpack('<Q', bytes(u.mem_read(0x82fff008, 8)))[0]
+
         def cpu(uc,address,size,data):
             if address==END:
                 events.append('returned');uc.emu_stop();return
@@ -57,13 +60,16 @@ class ReturnTest(unittest.TestCase):
                 events.append('watchdog');uc.emu_stop();return
             if address in (self.symbols['lk_return_save'],self.symbols['lk_return_restore']):
                 save=address==self.symbols['lk_return_save']
+                if save:self.assertEqual(trace_stage(),0x11)
                 events.append('save' if save else 'restore')
                 uc.reg_write(reg.UC_ARM64_REG_X0,0xffffffff if (save_fail if save else restore_fail) else 0)
                 uc.reg_write(reg.UC_ARM64_REG_PC,uc.reg_read(reg.UC_ARM64_REG_X30));return
             if address==0xb500b904:
+                self.assertEqual(trace_stage(),0x12)
                 events.append('cleanup')
                 uc.reg_write(reg.UC_ARM64_REG_PC,uc.reg_read(reg.UC_ARM64_REG_X30));return
             if address==EFI:
+                self.assertEqual(trace_stage(),0x22)
                 events.append('efi')
                 for r in initial:uc.reg_write(r,0)
                 uc.reg_write(reg.UC_ARM64_REG_SP,0xb5d00000)
@@ -86,6 +92,7 @@ class ReturnTest(unittest.TestCase):
         for r,value in initial.items():self.assertEqual(u.reg_read(r),value,f'reg {r}')
         self.assertEqual(u.reg_read(reg.UC_ARM64_REG_X0),0xffffffff if save_fail else action)
         self.assertEqual(events,['save','returned'] if save_fail else ['save','cleanup','efi','restore','returned'])
+        if save_fail:self.assertEqual(trace_stage(),0x13)
         if not save_fail:
             for key,value in original.items():self.assertEqual(system[key],value,key)
 
@@ -107,10 +114,22 @@ class ReturnTest(unittest.TestCase):
             u.mem_write(0xb5122040,struct.pack('<I',active))
             u.mem_write(0xb5f01180,struct.pack('<Q',0x0000000086000791))
             u.reg_write(reg.UC_ARM64_REG_SP,0xb5e00000)
+            u.reg_write(reg.UC_ARM64_REG_X19,0x12345678)
             u.reg_write(reg.UC_ARM64_REG_X0,0xb500da8c if cold else 0xb500e2c8)
             events=[]
             def call(uc,address,size,data):
                 if address==0xb5020ea4:events.append('boot');uc.emu_stop()
+                elif address==0xb5093220:
+                    # A long menu or an unclean Android filesystem must not
+                    # inherit the nearly expired RAMBoot watchdog deadline.
+                    self.assertEqual(uc.reg_read(reg.UC_ARM64_REG_X0),180000)
+                    self.assertEqual(uc.reg_read(reg.UC_ARM64_REG_SP)%16,0)
+                    events.append('watchdog')
+                    # Native calls may destroy all caller-saved registers.
+                    # The selected boot target must survive that call.
+                    resume=uc.reg_read(reg.UC_ARM64_REG_X30)
+                    for i in range(18):uc.reg_write(getattr(reg,f'UC_ARM64_REG_X{i}'),0xdead0000+i)
+                    uc.reg_write(reg.UC_ARM64_REG_PC,resume)
                 elif address==0xb500e2a4:
                     # Permission change must happen while executing native LK.
                     self.assertEqual(struct.unpack('<Q',bytes(uc.mem_read(0xb5f01180,8)))[0],0x0060000086000711)
@@ -125,8 +144,9 @@ class ReturnTest(unittest.TestCase):
                     uc.reg_write(reg.UC_ARM64_REG_PC,uc.reg_read(reg.UC_ARM64_REG_X30))
             u.hook_add(UC_HOOK_CODE,call)
             u.emu_start(self.symbols['lk_return_android'],0,count=100)
-            self.assertEqual(events,['boot'] if cold else (['okay'] if active else [])+['usb-stop','boot'])
+            self.assertEqual(events,['watchdog']+(['boot'] if cold else (['okay'] if active else [])+['usb-stop','boot']))
             self.assertEqual(u.reg_read(reg.UC_ARM64_REG_SP),0xb5e00000)
+            self.assertEqual(u.reg_read(reg.UC_ARM64_REG_X19),0x12345678)
             self.assertEqual(u.reg_read(reg.UC_ARM64_REG_X30),0xb5012a80)
 
 

@@ -32,7 +32,7 @@ class LinuxBootTest(unittest.TestCase):
         return status,out
     def test_actual_linux_image(self):
         status,out=self.run_parse();self.assertEqual(status,0)
-        self.assertEqual(out.kernel,16939016);self.assertEqual(out.entry,0xd4000000)
+        self.assertEqual(out.kernel,struct.unpack_from('<I',self.header,8)[0]);self.assertEqual(out.entry,0xd4000000)
         self.assertGreaterEqual(out.memory,out.kernel)
         self.assertLessEqual(out.offset+out.ramdisk,len(self.data))
     def test_truncation_and_payload_bounds(self):

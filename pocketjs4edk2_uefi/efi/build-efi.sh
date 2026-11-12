@@ -42,7 +42,7 @@ set +u
 source "$edk2/edksetup.sh"
 set -u
 build -a AARCH64 -t GCC5 -b RELEASE -p efi/PocketJsUefiPkg.dsc \
-  -D "PJB_BOOT_ABI_INCLUDE=$abi" -D "W202_PLATFORM_INCLUDE=$platform/Ums9620Pkg/Include" \
+  -D "PJB_BOOT_ABI_INCLUDE=$abi" -D "W202_PLATFORM_INCLUDE=$platform/Ums9620Pkg/W202ds/Include" \
   -D "W202_ANDROID_BOOT_ENTER=${W202_ANDROID_BOOT_ENTER:-FALSE}" \
   -D "W202_LK_RETURN_PROBE_ONLY=${W202_LK_RETURN_PROBE_ONLY:-FALSE}" -n "$jobs"
 for name in AndroidBoot AndroidLk DebianServer DebianKde HandoffProbe TouchScope; do

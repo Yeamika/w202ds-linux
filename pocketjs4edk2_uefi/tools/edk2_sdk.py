@@ -86,6 +86,11 @@ def export(a):
         template = (a.fv / (fv_name + '.inf')).read_text()
         def replace(m):
             file = Path(m.group(1).strip())
+            # GenFv records absolute paths. Read from the selected FV tree
+            # when a verified platform build has moved since compilation.
+            if 'Ffs' in file.parts:
+                index = len(file.parts) - 1 - file.parts[::-1].index('Ffs')
+                file = a.fv / Path(*file.parts[index:])
             guid = str(uuid.UUID(bytes_le=file.read_bytes()[:16]))
             if guid == APP_GUID:
                 return '' # Runtime is always supplied anew by the consumer.

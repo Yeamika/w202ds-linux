@@ -1,22 +1,10 @@
 {
   "schema": 1,
   "lk_baseline": {
-    "name": "uboot-b-pjs-ram-v2.img",
+    "name": "lk-jump-rmk.img",
     "bytes": 5242880,
-    "sha256": "0e77583a569b0bf69b5fbd51b22136681fd818b0258f1b3dd143cf41db50d060",
+    "sha256": "fe2c7b3f9384453aa9fe68c3646efd1705a221fe17a0e0d4005dd2fa89051a42",
     "origin": "W202DS LK binary baseline; full matching LK rebuild is not available"
-  },
-  "settings_source_example": {
-    "name": "android-lk-return-v1/uboot-b-uefi.img",
-    "bytes": 5242880,
-    "sha256": "072bcff01b32283fc22405ddc673244ec67f302d93b9674ad714dba3575a867d",
-    "purpose": "Compatible source of the two PJB settings banks at 0x4e0000; not executable input"
-  },
-  "touch_firmware": {
-    "name": "Himax_firmware_guoxian.bin",
-    "bytes": 261120,
-    "sha256": "bdcd327d48628dd703b1d0a8ea778ef7f7aacd7beb227efdb78ea788928f0156",
-    "provided_by": "w202ds-linux/6.18.35/Devices/touchscreen/firmware"
   },
   "lk_bridge_source": {
     "repository": "https://github.com/sprd-linux/lk.git",
@@ -32,5 +20,14 @@
       "project": "W202DS UMS9620 UEFI",
       "imported_sha256": "c83209a11cb3dfb565a42d70239a75092a2a8fb357025016d321fba4f0f974d9"
     }
+  },
+  "settings_storage": {
+    "kind": "esp-files",
+    "directory": "EFI/BOOT/pj4edk",
+    "files": [
+      "settings0.bin",
+      "settings1.bin"
+    ],
+    "record_bytes": 512
   }
 }

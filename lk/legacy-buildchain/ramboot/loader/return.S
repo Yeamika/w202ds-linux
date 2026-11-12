@@ -8,6 +8,15 @@
     ldr x9, [x16, #(8*\index)]
     msr \reg, x9
 .endm
+.macro trace_stage stage, clean=1
+    ldr x9, =0x82fff000
+    mov x10, #\stage
+    str x10, [x9, #8]
+    .if \clean
+    dc cvac, x9
+    .endif
+    dsb sy
+.endm
 .section .text.lk_return,"ax"
 .global handoff_enter_sec_returnable
 handoff_enter_sec_returnable:
@@ -61,13 +70,17 @@ handoff_enter_sec_returnable:
     save_sys tpidrro_el0, 55
     save_sys mdcr_el2, 56
     mov x19, x0
+    trace_stage 0x11
     bl lk_return_save
     cbnz w0, save_failed
+    trace_stage 0x12
     ldr x16, =0xb500b904
     blr x16
+    trace_stage 0x22, 0
     dsb sy
     br x19
 save_failed:
+    trace_stage 0x13
     mov w0, #-1
     b restore_abi
 
@@ -161,6 +174,18 @@ restore_failed:
     b restore_failed
 .global lk_return_android
 lk_return_android:
+    /* UEFI may have consumed almost all of the RAM payload's 30-second
+     * deadline. Give native loading and Android userspace a fresh bounded
+     * window; the OS takes over this watchdog after its PM service starts.
+     * Preserve both the native target and the caller's callee-saved state. */
+    stp x19, x30, [sp, #-16]!
+    mov x19, x0
+    ldr x0, =180000
+    ldr x16, =0xb5093220
+    blr x16
+    mov x9, x19
+    ldp x19, x30, [sp], #16
+    mov x0, x9
     /* The PLK1 hook made 0x86000000 RO+X. Native boot writes its image there.
      * Restore RW+XN only after leaving this module, using the pinned LK helper.
      * Prepare the native handler's stack frame and enter after its prologue;

@@ -39,5 +39,6 @@
     }
   ],
   "battery_percent": null,
-  "external_power": null
+  "external_power": null,
+  "esp_discovery": true
 }

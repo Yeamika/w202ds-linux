@@ -5,8 +5,8 @@ endif
 CC := $(CROSS_COMPILE)gcc
 LD := $(CROSS_COMPILE)ld
 OBJCOPY := $(CROSS_COMPILE)objcopy
-RAMBOOT_SRC := ../uefi_ramboot.c
-RAMBOOT_HDR := ../uefi_ramboot.h
+RAMBOOT_SRC := bridge/uefi_ramboot.c
+RAMBOOT_HDR := bridge/uefi_ramboot.h
 # Public loader ABI supplied by the caller; this checkout knows no other tree.
 HANDOFF_HEADER :=
 ifneq ($(strip $(HANDOFF_INCLUDE)),)
@@ -17,9 +17,14 @@ CFLAGS := -O2 -Wall -Wextra -Werror -std=c11 -ffreestanding -fno-builtin \
           -ffunction-sections -fdata-sections -mgeneral-regs-only -ffixed-x18
 CFLAGS += -I$(dir $(RAMBOOT_HDR)) $(if $(HANDOFF_HEADER),-I$(dir $(HANDOFF_HEADER))) $(EXTRA_CFLAGS)
 RETURN_OBJECTS :=
+UEFI_FASTBOOT ?= 0
 ifeq ($(LK_RETURN),1)
 CFLAGS += -DW202_LK_RETURN_ENABLED
 RETURN_OBJECTS := $(OUT)/return-c.o $(OUT)/return-asm.o
+ifeq ($(UEFI_FASTBOOT),1)
+CFLAGS += -DW202_LK_FASTBOOT_ENABLED
+RETURN_OBJECTS += $(OUT)/fastboot-service.o $(OUT)/fastboot-native.o $(OUT)/fastboot-gateway.o
+endif
 endif
 
 .PHONY: all
@@ -132,6 +137,15 @@ $(OUT)/return-c.o: loader/return.c $(HANDOFF_INCLUDE)/LkReturn.h | $(OUT) check-
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(OUT)/return-asm.o: loader/return.S $(HANDOFF_INCLUDE)/LkReturn.h | $(OUT) check-handoff-interface
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(OUT)/fastboot-service.o: ../fastboot/service.c ../fastboot/service.h ../fastboot/flash.h $(HANDOFF_INCLUDE)/LkFastboot.h | $(OUT)
+	$(CC) $(CFLAGS) -Os -c $< -o $@
+
+$(OUT)/fastboot-native.o: ../fastboot/native.c ../fastboot/service.h ../fastboot/native.h | $(OUT)
+	$(CC) $(CFLAGS) -Os -c $< -o $@
+
+$(OUT)/fastboot-gateway.o: ../fastboot/gateway.S $(HANDOFF_INCLUDE)/LkFastboot.h $(HANDOFF_INCLUDE)/LkReturn.h | $(OUT)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(OUT)/ramboot-enter.elf: $(OUT)/enter-entry.o $(OUT)/enter.o $(OUT)/uefi-ramboot.o $(RETURN_OBJECTS) probes/probe.ld

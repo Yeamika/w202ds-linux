@@ -20,7 +20,8 @@ def main():
         'schema': 1,
         'source_files': {str(f.relative_to(args.source)): sha(f)
                          for f in sorted(args.source.rglob('*')) if f.is_file()},
-        'platform_lk_return_sha256': sha(args.platform/'Ums9620Pkg/Include/LkReturn.h'),
+        'platform_lk_return_sha256': sha(args.platform/'Ums9620Pkg/W202ds/Include/LkReturn.h'),
+        'platform_memory_sha256': sha(args.platform/'Ums9620Pkg/W202ds/Include/W202dsMemory.h'),
         'linux_middleware_headers': {str(f.relative_to(args.source/'LinuxBoot/common')): sha(f)
             for f in sorted((args.source/'LinuxBoot/common/include').glob('*.h'))},
         'abi_header_sha256': sha(args.abi_include/'pocketjs_boot_context.h'),

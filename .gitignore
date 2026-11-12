@@ -11,3 +11,9 @@ output/
 /pocketjs4edk2_uefi/ui
 /pocketjs4edk2_uefi/lk
 /pocketjs4edk2_uefi/build/
+
+# Required, pinned W202DS download-stage inputs.
+!/tool/flash/loaders/*.bin
+
+/tool/flash/spd_dump/win/
+/tool/flash/spd_dump/linux/

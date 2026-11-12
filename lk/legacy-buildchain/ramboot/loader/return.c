@@ -5,6 +5,11 @@
 #include <stdint.h>
 #include <stddef.h>
 #include "LkReturn.h"
+#ifdef W202_LK_FASTBOOT_ENABLED
+#include "LkFastboot.h"
+#include "../../fastboot/service.h"
+extern void lk_fb_gateway(void);
+#endif
 #define GICD 0x12000000u
 #define GICR 0x12050000u
 #define MAX_IRQS 1024
@@ -18,6 +23,10 @@ struct context {
     uint64_t route[MAX_IRQS];
 };
 _Static_assert(sizeof(struct context)<=W202_LK_CONTEXT_LIMIT,"context reservation");
+#ifdef W202_LK_FASTBOOT_ENABLED
+_Static_assert(sizeof(struct context)<=W202_LK_FB_CONTEXT-W202_LK_CONTEXT_ADDRESS,
+               "saved LK context must not overlap Fastboot gateway context");
+#endif
 static struct context *const saved=(void *)(uintptr_t)W202_LK_CONTEXT_ADDRESS;
 extern void lk_return_resume(void);
 static int wait_rwp(uintptr_t base,uint32_t bit) {
@@ -73,6 +82,20 @@ int lk_return_save(void) {
     *desc=(W202_LK_RETURN){W202_LK_RETURN_MAGIC,1,sizeof(*desc),0,
         (uintptr_t)lk_return_resume,W202_LK_CONTEXT_ADDRESS,sizeof(*saved),3};
     desc->checksum=0-W202LkReturnSum(desc);
+#ifdef W202_LK_FASTBOOT_ENABLED
+    /* Trampoline cache maintenance currently implements pre-CCIDX CCSIDR.
+     * Refuse to publish the optional service on any other CPU architecture. */
+    uint64_t mmfr2;
+    __asm__ volatile("mrs %0, id_aa64mmfr2_el1":"=r"(mmfr2));
+    if (((mmfr2>>20)&15)==0) {
+        W202_LK_FASTBOOT_DESCRIPTOR *fb=(void *)(uintptr_t)W202_LK_FB_ADDRESS;
+        lk_fb_prepare();
+        *fb=(W202_LK_FASTBOOT_DESCRIPTOR){W202_LK_FB_MAGIC,1,sizeof(*fb),0,
+                              (uintptr_t)lk_fb_gateway,3,0};
+        fb->checksum=0-W202LkFastbootSum(fb);
+        __asm__ volatile("dc cvac, %0; dsb sy"::"r"(fb):"memory");
+    }
+#endif
     return 0;
 }
 int lk_return_restore(void) {

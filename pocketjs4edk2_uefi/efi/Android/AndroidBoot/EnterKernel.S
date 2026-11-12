@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 #include <AsmMacroIoLibV8.h>
+#include <W202dsMemory.h>
 .text
 .align 4
 ASM_FUNC(W202EnterKernel)
@@ -17,20 +18,27 @@ ASM_FUNC(W202EnterKernel)
   ubfx x4, x4, #16, #4
   mov x5, #4
   lsl x5, x5, x4
-  ldr x6, =0x82800000
-  ldr x7, =0x86000000
+  ldr x6, =W202DS_UEFI_BOOT_MEMORY_BASE
+  ldr x7, =W202DS_UEFI_BOOT_MEMORY_END
 1:
   dc civac, x6
   add x6, x6, x5
   cmp x6, x7
   b.lo 1b
-  ldr x6, =0xd0000000
-  ldr x7, =0xd8200000
+  ldr x6, =W202DS_UEFI_EXTRA_MEMORY_BASE
+  ldr x7, =W202DS_UEFI_EXTRA_MEMORY_END
 2:
   dc civac, x6
   add x6, x6, x5
   cmp x6, x7
   b.lo 2b
+  ldr x6, =W202DS_OS_STAGING_BASE
+  ldr x7, =W202DS_OS_STAGING_END
+3:
+  dc civac, x6
+  add x6, x6, x5
+  cmp x6, x7
+  b.lo 3b
   dsb sy
   ic iallu
   dsb sy

@@ -15,6 +15,7 @@ REPOSITORY = ROOT.parent
 PATHS = runpy.run_path(str(ROOT/'tools/project_paths.py'))
 default_repository = PATHS['default_repository']
 LK = PATHS['lk_directory']()
+CONTAINER = runpy.run_path(str(ROOT/'tools/lk_container.py'))
 RUNTIME_SOURCES = ('edk2-libc', 'pocketjs', 'quickjs')
 
 
@@ -26,9 +27,23 @@ def repository_identity(root):
     def git(*args):
         return subprocess.check_output(['git', '-C', str(root), *args], text=True)
     files = git('ls-files', '--cached', '--others', '--exclude-standard', '-z').split('\0')
+    # Local development uses links in place of checked-out Git submodules.
+    # Read gitlinks directly so provenance works in both layouts.
+    submodules = []
+    for entry in git('ls-files', '--stage', '-z').split('\0'):
+        if not entry.startswith('160000 '):
+            continue
+        metadata, name = entry.split('\t', 1)
+        pinned = metadata.split()[1]
+        component = root/name
+        actual = subprocess.run(['git', '-C', str(component), 'rev-parse', 'HEAD'],
+                                capture_output=True, text=True) if component.is_dir() else None
+        commit = actual.stdout.strip() if actual and actual.returncode == 0 else pinned
+        prefix = '-' if not actual or actual.returncode else (' ' if commit == pinned else '+')
+        submodules.append(prefix+commit+' '+name)
     return {'commit': git('rev-parse', 'HEAD').strip(),
             'origin': git('remote', 'get-url', 'origin').strip(),
-            'submodules': git('submodule', 'status', '--recursive').splitlines(),
+            'submodules': submodules,
             'source_files': {name: sha(root/name) for name in sorted(set(files))
                              if name and (root/name).is_file()}}
 
@@ -78,16 +93,17 @@ def main():
     p.add_argument('--source-ref', action='append', default=[], metavar='NAME=REV',
                    help='edk2, brotli, edk2-libc, pocketjs or quickjs: commit, branch, tag or latest')
     p.add_argument('--output', type=Path, required=True, help='fresh directory outside all source trees')
-    p.add_argument('--lk-baseline', type=Path, required=True)
-    p.add_argument('--settings-image', type=Path, required=True)
-    p.add_argument('--touch-firmware', type=Path, required=True)
+    p.add_argument('--lk-baseline', type=Path, help='optional prebuilt RAMLK; default: rebuild from source')
     p.add_argument('--rust-build', type=Path, help='verified Rust-only bundle from a compiler machine')
     p.add_argument('--runtime-build', type=Path, help='existing pj4edk2 build, including PocketJS.a and abi-support')
     p.add_argument('--platform-build', type=Path, help='existing edk2-ums9620 platform build')
     p.add_argument('--jobs', type=int, default=4)
     p.add_argument('--revision', default='w202ds-edk2-split')
+    p.add_argument('--lk-debug', action='store_true', help='enable watchdog and USB recovery in the generated minimal LK base')
+    p.add_argument('--fastboot', action=argparse.BooleanOptionalAction, default=True,
+                   help='polled LK Fastboot service without native display output')
     a = p.parse_args()
-    for name in ('edk2', 'pocketjs', 'output', 'lk_baseline', 'settings_image', 'touch_firmware',
+    for name in ('edk2', 'pocketjs', 'output', 'lk_baseline',
                  'rust_build', 'runtime_build', 'platform_build', 'default_ui', 'source_cache', 'source_lock'):
         value = getattr(a, name)
         if value is not None:
@@ -110,14 +126,18 @@ def main():
     a.default_ui = default_ui.resolve()
     if a.output == a.default_ui or a.default_ui in a.output.parents:
         p.error('--output must be outside the UI directory')
+    lk_generated = None
+    if a.lk_baseline is None or a.lk_debug:
+        lk_generated = CONTAINER['build_ramlk'](debug=a.lk_debug)
+    if a.lk_baseline is None:
+        a.lk_baseline = lk_generated['image']
     lock = json.loads((ROOT/'inputs.lock.json').read_text())
-    for name in ('lk_baseline', 'touch_firmware'):
-        file, expected = getattr(a, name), lock[name]
-        if file.stat().st_size != expected['bytes'] or sha(file) != expected['sha256']:
-            p.error(f'incorrect {name}: {file}')
-    if a.settings_image.stat().st_size != 0x500000:
-        p.error('settings source must be a complete compatible 5 MiB image')
+    lk_base_features = CONTAINER['validate_inputs'](LK, a.lk_baseline, lock)
+    if a.lk_debug:
+        CONTAINER['require_debug_features'](lk_base_features)
     a.output.mkdir(parents=True)
+    debug_tools = CONTAINER['export_debug_tools'](LK, lk_generated['output'], a.lk_baseline,
+                                                  a.output) if a.lk_debug else []
     env = dict(os.environ, PJB_JOBS=str(a.jobs), PYTHONDONTWRITEBYTECODE='1')
     logs = a.output/'logs'
     logs.mkdir()
@@ -193,15 +213,14 @@ def main():
         raise SystemExit('PocketJS.a differs from its ABI support manifest')
     platform = a.platform_build or a.output/'platform'
     env.update(W202_STORAGE_TEST='FALSE', W202_BOARD_SERVICES='TRUE', W202_TOUCH_TEST='TRUE',
+               W202_LK_FASTBOOT='TRUE' if a.fastboot else 'FALSE',
                W202_TOUCH_DIRECT='FALSE', W202_TOUCH_RELOAD='TRUE', W202_ANDROID_BOOT_TEST='FALSE',
                W202_ANDROID_BOOT_ENTER='FALSE', W202_LK_RETURN_TEST='FALSE', W202_LK_RETURN_PROBE_ONLY='FALSE')
     if not a.platform_build:
-        run('platform', 'bash', a.edk2/'build.sh', '--output', platform,
-            '--edk2', edk2_source, '--abi-include', a.pocketjs/'pocketjsforedk2/include',
-            '--touch-firmware', a.touch_firmware)
+        run('platform', 'bash', a.edk2/'build.sh', '--target', 'w202ds', '--output', platform,
+            '--edk2', edk2_source, '--abi-include', a.pocketjs/'pocketjsforedk2/include')
     run('verify-platform', sys.executable, a.edk2/'tools/platform-manifest.py', 'verify',
-        '--build', platform, '--abi-include', a.pocketjs/'pocketjsforedk2/include',
-        '--touch-firmware', a.touch_firmware)
+        '--build', platform, '--abi-include', a.pocketjs/'pocketjsforedk2/include')
     platform_manifest = json.loads((platform/'platform-build.json').read_text())
     verify_platform_sources(platform_manifest, platform_upstream)
     verify_abi_sources(support_manifest, upstream_sources, platform_manifest['edk2'])
@@ -219,17 +238,9 @@ def main():
         '--archive', runtime/'PocketJS.a', '--work', a.output/'final-link', '--output', a.output/'w202ds.fd')
     run('ramboot', sys.executable, ROOT/'tools/mkramboot.py', '--fd', a.output/'w202ds.fd',
         '--output', a.output/'ramboot.img')
-    bridge = a.output/'lk-bridge'
-    lk = LK/'ramboot'
-    run('lk-bridge', 'make', '-C', lk, f'OUT={bridge}', 'LK_RETURN=1',
-        f'HANDOFF_INCLUDE={a.edk2/"Ums9620Pkg/Include"}', 'resident', 'enter-sec')
+    partition_images = CONTAINER['package'](run, a.output, LK, a.edk2,
+                                              a.lk_baseline, a.revision, fastboot=a.fastboot)
     resident = a.output/'resident'
-    args = ['--baseline', a.lk_baseline, '--settings-image', a.settings_image,
-            '--loader', bridge/'ramboot-resident.bin', '--image', a.output/'ramboot.img',
-            '--output', resident, '--revision', a.revision]
-    run('prepare-resident', sys.executable, lk/'package-resident.py', 'prepare', *args)
-    run('lk-bootstrap', 'make', '-C', lk, f'OUT={resident}', 'resident-bootstrap')
-    run('package-resident', sys.executable, lk/'package-resident.py', 'package', *args)
     for folder, name in [('Android', 'AndroidLk'), ('DebianServer', 'DebianServer'), ('DebianKDE', 'DebianKde')]:
         destination = a.output/'ESP/EFI'/folder/'bootaa64.efi'
         destination.parent.mkdir(parents=True)
@@ -242,14 +253,16 @@ def main():
         path = entry['path']
         if not path.startswith('\\EFI\\') or not (a.output/'ESP'/path.lstrip('\\').replace('\\', '/')).is_file():
             raise SystemExit(f'Menu entry has no matching ESP artifact: {path}')
-    artifacts = [a.output/'w202ds.fd', a.output/'ramboot.img', resident/'uboot-b-uefi.img',
-                 efi/'efi-build.json', *sorted((efi/'bin').glob('*.efi')),
-                 *sorted((a.output/'ESP').rglob('*.efi'))]
+    artifacts = [a.output/'w202ds.fd', a.output/'ramboot.img', a.output/'ramboot-uefi.bin', resident/'uboot-b-uefi.img',
+                 resident/'manifest.json', efi/'efi-build.json', *sorted((efi/'bin').glob('*.efi')),
+                 *sorted((a.output/'ESP').rglob('*.efi')), *debug_tools]
     manifest = {'schema': 1, 'revision': a.revision, 'device_validation': 'not-tested',
+                'partition_images': partition_images,
+                'lk_base_features': lk_base_features,
                 'source_repositories': {name: repository_identity(path) for name, path in
                                         [('edk2-ums9620', a.edk2), ('pj4edk2', a.pocketjs), ('w202ds-boot', REPOSITORY)]},
                 'inputs': {name: {'bytes': getattr(a, name).stat().st_size, 'sha256': sha(getattr(a, name))}
-                           for name in ('lk_baseline', 'settings_image', 'touch_firmware')},
+                           for name in ('lk_baseline',)},
                 'runtime_sha256': sha(runtime/'PocketJS.a'),
                 'upstream_sources': upstream_sources,
                 'default_ui': runtime_inputs['default_ui'],

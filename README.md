@@ -22,16 +22,27 @@ git clone --recursive https://github.com/Yeamika/w202ds-boot.git
 
 ```sh
 python3 pocketjs4edk2_uefi/build.py --output /path/to/build/w202ds \
-  --lk-baseline /path/to/inputs/uboot-b-pjs-ram-v2.img \
-  --settings-image /path/to/inputs/settings-source.img \
-  --touch-firmware /path/to/Himax_firmware_guoxian.bin
+  --lk-baseline /path/to/inputs/lk-jump-rmk.img
 ```
 
 ## 目录职责
 
-- `pocketjs4edk2_uefi/`：组合层源码、EFI 启动器、测试和构建工具；内部
-  `components/` 以子模块固定 `edk2-ums9620` 与 `pj4edk2`。
+- `components/`：以子模块固定 `edk2-ums9620` 与 `pj4edk2`，本地开发可在同一路径使用链接。
+- `pocketjs4edk2_uefi/`：组合层源码、EFI 启动器、测试和构建工具。
 - `lk/`：当前使用的 LK 桥接和 RAMBoot 源码，也是后续原厂 LK 及板级 LK
   参考代码的存放位置。本目录不参与 ESP 独立编译，由组合构建通过链接使用。
 
 历史验证记录在 [`pocketjs4edk2_uefi/VALIDATION.md`](pocketjs4edk2_uefi/VALIDATION.md)。
+
+## 本地二进制输入
+
+RAMLK 从 `lk/firmware/uboot-mod.bin` 自动生成；设置由运行时读写 ESP 上的 `EFI/BOOT/pj4edk/settings0.bin` 和 `settings1.bin`。两个构建入口均使用
+本仓库内的 LK 底包，无需 REIMUKS 或 Linux 工作区提供二进制。
+例如只需指定新输出目录：
+
+```sh
+python3 pocketjs4edk2_uefi/build.py --output /path/to/build/w202ds
+```
+
+二进制当前由 Git 忽略；复制工程时需携带 `lk/firmware/uboot-mod.bin`。
+仅克隆 Git 仓库不会自动得到它们。Git 源码依赖及编译工具仍需正常准备。

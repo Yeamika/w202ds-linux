@@ -6,7 +6,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def default_repository(name, marker, root=ROOT):
-    for candidate in (root/'components'/name, root/name, root.parent/name,
+    for candidate in (root.parent/'components'/name, root/'components'/name, root/name, root.parent/name,
                       root.parent.parent/name):
         if (candidate/marker).is_file():
             return candidate
@@ -14,7 +14,7 @@ def default_repository(name, marker, root=ROOT):
 
 
 def lk_directory(root=ROOT):
-    return root/'lk' if (root/'lk/ramboot').is_dir() else root.parent/'lk'
+    return root/'lk' if (root/'lk/ramboot').is_dir() else root.parent/'lk/legacy-buildchain'
 
 
 def edk2_directory():

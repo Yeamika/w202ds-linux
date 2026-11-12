@@ -29,7 +29,8 @@ def main():
                LK_RETURN_ELF=str(build/'lk-bridge/ramboot-enter.elf'),
                LK_RETURN_RESIDENT_IMAGE=str(build/'resident/uboot-b-uefi.img'))
     tests = lk_directory()/'ramboot/tests'
-    for name in ('test_resident.py', 'test_return.py'):
+    names = ['test_resident.py', 'test_return.py']
+    for name in names:
         subprocess.run([sys.executable, '-m', 'unittest', 'discover', '-s', str(tests),
                         '-p', name, '-v'], env=env, cwd=build, check=True)
 

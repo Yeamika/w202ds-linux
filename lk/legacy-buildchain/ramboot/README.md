@@ -2,7 +2,7 @@
 
 ## 简介
 
-匹配 W202DS 原厂派生 LK 的 RAMBoot、探针和 UEFI 常驻 bootstrap。共用 `../uefi_ramboot.[ch]` 的镜像解析器；完整原生 W202DS LK 尚未完成。
+匹配 W202DS 原厂派生 LK 的 RAMBoot、探针和 UEFI 常驻 bootstrap。共用 `bridge/uefi_ramboot.[ch]` 的镜像解析器；完整原生 W202DS LK 尚未完成。
 
 ```text
 ramboot/
@@ -21,13 +21,15 @@ ramboot/
 - 已有实机 RAMBoot 进入 SEC／PEI／DXE／PocketJS 和 EFI 子程序返回记录；r61 有常驻冷启动证据。
 - `loader/resident.c` 只截普通／外部复位，其余模式保留原厂路径；失败转入原生 Fastboot。
 - 先停止旧看门狗，再在面板初始化前启用恢复看门狗；冷启动调用原厂 `lcd_enable` 建立扫描层，开启 EIC164 音量上数据输入。
-- 封装器生成精确 5 MiB 容器，保留匹配的签名副本、证书和两个 PJB 设置 bank；新候选须独立验收。
+- 封装器生成精确 5 MiB 容器，保留匹配的签名副本和证书；设置保存在 ESP。启动痕迹只保存在 RAM，不写入 eMMC 日志 bank；新候选须独立验收。
 
 ## Experimental（实验中）
 
 `LK_RETURN=1` 可保存 CPU、GIC 和计时器上下文，供 EFI 适配程序退出后返回同一次启动的 LK。2026-11-05 RAM 往返 probe、正常菜单及 B 常驻普通重启后经原厂 LK 继续启动 Android A 均已通过，Android完成启动、ADB/root正常；用户已验收实体按键启动。6项 ARM64 仿真覆盖寄存器／失败分支、下载区权限、Fastboot应答及冷启动入口；仿真不建模真实GIC硬件。当时的5 MiB容器 `072bcff0…` 已写 B 并完整读回。此前菜单退回的 EFI 安全通知问题已在外层修复；彻底断电和反复启动仍待验收。底层 Makefile 默认未启用，pocketjs4edk2_uefi/build.py 显式启用；该构建另需 `HANDOFF_INCLUDE/LkReturn.h`。
 
 原生引导前必须离开 `0x86000000` 的 RAM 模块，再用已匹配的 LK helper 恢复下载区 RW+XN；原厂加载器会用这个区域装入 boot 镜像。Fastboot路径保留原命令应答，冷启动路径直接续接 normal_mode。`W202_LK_RETURN_DEFER_ANDROID` 是只用于分步诊断的构建开关：选好 Android 后返回 Fastboot，随后由宿主发送 continue；不用于交付镜像。
+
+返回 LK 继续启动 Android 时，`lk_return_android` 通过已匹配的原生接口重新设置 180 秒恢复看门狗，给系统装载和 Android 启动一个新的时限。不能沿用 RAMBoot 的 30 秒时限：菜单和装载过程可能已经消耗大部分时间，Android 检查文件系统时会因此复位。该处理同时覆盖 RAMBoot 与常驻入口，保留看门狗恢复能力。返回仿真检查续期发生在原生引导前，并验证原生调用破坏易失寄存器后，目标地址、栈及 Fastboot 应答仍正确。
 
 当前借用原厂 DDR、时钟和面板初始化，只接受 EL2／单活动 CPU；未实现本板 SMP。RAM、缓存、异常及完整次级 CPU 交接仍需审计。常驻启动通过不等于触控、页面流畅度或 EFI 系统加载器通过。
 
@@ -46,7 +48,7 @@ RAM 入口现在与 resident 一样补齐 EIC164 数据输入掩码；恢复 LK 
 在 w202ds-boot 仓库根目录执行，输出目录须在源码之外：
 
 ```sh
-make -C lk/ramboot \
+make -C lk/legacy-buildchain/ramboot \
   CROSS_COMPILE=/path/to/bin/aarch64-linux-gnu- \
   OUT=/path/to/project/output/ramboot \
   HANDOFF_INCLUDE=/path/to/public-loader-abi \

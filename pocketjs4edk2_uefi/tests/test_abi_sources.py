@@ -62,6 +62,16 @@ class PlatformSourcesTest(unittest.TestCase):
 
 
 class RepositoryDefaultsTest(unittest.TestCase):
+    def test_root_component_is_used_from_nested_builder(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)/'w202ds-boot'
+            root = repo/'pocketjs4edk2_uefi'
+            root.mkdir(parents=True)
+            submodule = repo/'components'/'pj4edk2'
+            submodule.mkdir(parents=True)
+            (submodule/'build.sh').write_text('')
+            self.assertEqual(API['default_repository']('pj4edk2', 'build.sh', root), submodule)
+
     def test_component_link_is_used_in_local_layout(self):
         with tempfile.TemporaryDirectory() as tmp:
             top = Path(tmp)
@@ -94,8 +104,8 @@ class RepositoryDefaultsTest(unittest.TestCase):
     def test_test_runner_finds_board_lk_without_ignored_link(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)/'w202ds-boot'/'pocketjs4edk2_uefi'
-            (root.parent/'lk/ramboot').mkdir(parents=True)
-            self.assertEqual(API['PATHS']['lk_directory'](root), root.parent/'lk')
+            (root.parent/'lk/legacy-buildchain/ramboot').mkdir(parents=True)
+            self.assertEqual(API['PATHS']['lk_directory'](root), root.parent/'lk/legacy-buildchain')
 
 
 if __name__ == '__main__':

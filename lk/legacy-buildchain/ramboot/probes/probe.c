@@ -33,7 +33,7 @@ int ramboot_probe(const char *operation)
     lk_printf("RAMBOOT-PROBE: SCTLR_EL2=%lx TCR_EL2=%lx TTBR0_EL2=%lx\n",
               (unsigned long)sctlr, (unsigned long)tcr, (unsigned long)ttbr);
     lk_printf("RAMBOOT-PROBE: LK active CPU count=%u\n", *lk_cpu_count);
-    /* The installed pjs-run hook has already validated the 0x86000000 L2
+    /* The installed jump-rmk hook has already validated the 0x86000000 L2
      * entry before reaching this code. Read adjacent entries from that table. */
     lk_printf("RAMBOOT-PROBE: L2[820]=%lx L2[828]=%lx L2[85e]=%lx L2[860]=%lx\n",
               (unsigned long)lk_l2[0x10], (unsigned long)lk_l2[0x14],

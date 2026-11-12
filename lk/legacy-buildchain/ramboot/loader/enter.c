@@ -79,6 +79,7 @@ static void clean_lines(uintptr_t address, size_t size, uintptr_t line)
     __asm__ volatile("dsb sy" ::: "memory");
 }
 
+
 int ramboot_enter(const char *operation)
 {
     const uint8_t *download = (const void *)(uintptr_t)DOWNLOAD_BASE;
