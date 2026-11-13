@@ -1,0 +1,14 @@
+#!/bin/sh
+set -eu
+exec 9>/run/lock/w202-vpu.lock
+/usr/bin/flock -n 9 || { echo 'VPU decode is active' >&2; exit 1; }
+if test -d /sys/module/w202_vpu_codec; then /sbin/rmmod w202_vpu_codec; fi
+if test -d /sys/module/w202_vpu_iommu; then
+    # Driver removal briefly resumes VAU while restoring its clock parent.
+    sleep 1
+    for core in 32000000 32100000 32200000; do
+        echo 1 > "/sys/bus/platform/devices/$core.iommu/retire"
+    done
+    /sbin/rmmod w202_vpu_iommu
+fi
+if test -d /sys/module/w202_vpu_power; then /sbin/rmmod w202_vpu_power; fi

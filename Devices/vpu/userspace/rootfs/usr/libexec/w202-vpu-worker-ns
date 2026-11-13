@@ -1,0 +1,21 @@
+#!/bin/sh
+# Called only inside unshare's private mount/network/PID namespaces.
+set -eu
+test "$(id -u)" = 0
+root=/opt/w202ds/vpu/android
+ulimit -c 0
+mount --bind "$root" "$root"
+mount -o remount,bind,ro "$root"
+mount -t tmpfs -o mode=0700,nosuid,noexec tmpfs "$root/dev"
+mkdir "$root/dev/dri"
+for node in /dev/null /dev/zero /dev/random /dev/urandom /dev/sprd_vsp /dev/dri/renderD128; do
+    test -c "$node"
+    cp -a -- "$node" "$root$node"
+    chown root:root "$root$node"
+    chmod 0600 "$root$node"
+done
+mount -t proc -o ro,nosuid,nodev,noexec proc "$root/proc"
+mount -t tmpfs -o mode=0700,nosuid,nodev,noexec tmpfs "$root/tmp"
+exec env -i PATH=/system/bin \
+    LD_LIBRARY_PATH=/apex/com.android.runtime/lib64/bionic:/system/lib64:/vendor/lib64 \
+    /usr/sbin/chroot "$root" /w202-avc-worker "$@"

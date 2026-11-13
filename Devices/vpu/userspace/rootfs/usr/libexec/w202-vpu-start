@@ -1,0 +1,45 @@
+#!/bin/sh
+set -eu
+test -x /opt/w202ds/vpu/android/w202-avc-worker
+kernel_release=$(uname -r)
+for module in w202_vpu_power w202_vpu_iommu w202_vpu_codec; do
+    vermagic=$(/sbin/modinfo -F vermagic "$module")
+    case "$vermagic" in
+        "$kernel_release "*) ;;
+        *) echo "$module does not match running kernel $kernel_release" >&2; exit 1 ;;
+    esac
+done
+loaded=0
+for module in w202_vpu_power w202_vpu_iommu w202_vpu_codec; do
+    if test -d "/sys/module/$module"; then loaded=$((loaded + 1)); fi
+done
+if test "$loaded" = 3; then
+    # A refused stop can leave an active owner's modules loaded. Adopt only
+    # this complete, matching set; never unload an owner to restart a unit.
+    for module in w202_vpu_power w202_vpu_iommu w202_vpu_codec; do
+        expected=$(/sbin/modinfo -F srcversion "$module")
+        test -n "$expected"
+        test "$(cat "/sys/module/$module/srcversion")" = "$expected"
+    done
+    test -c /dev/sprd_vsp && test -c /dev/dri/renderD128
+    state=$(cat /sys/bus/platform/devices/32200000.video-codec/state)
+    case "$state" in *' broken=0 quarantined=0 '*) ;; *) echo 'VPU recovery required' >&2; exit 1 ;; esac
+    echo 'W202DS adopted matching active decoder modules'
+    exit 0
+fi
+test "$loaded" = 0 || { echo 'Partial VPU module set already loaded' >&2; exit 1; }
+accepted=0
+rollback() {
+    result=$?
+    trap - EXIT
+    if test "$accepted" != 1; then /usr/libexec/w202-vpu-stop || true; fi
+    exit "$result"
+}
+trap rollback EXIT
+/sbin/modprobe w202_vpu_power
+/sbin/modprobe w202_vpu_iommu
+/sbin/modprobe w202_vpu_codec
+test -c /dev/sprd_vsp
+test -c /dev/dri/renderD128
+accepted=1
+echo 'W202DS H264 hardware decoder ready; idle runtime power management enabled'

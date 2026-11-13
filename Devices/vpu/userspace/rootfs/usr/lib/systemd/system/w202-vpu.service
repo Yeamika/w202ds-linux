@@ -1,0 +1,14 @@
+[Unit]
+Description=W202DS H264 hardware decoding
+Requires=w202-gpu.service
+After=w202-gpu.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/w202-vpu-start
+ExecStop=/usr/libexec/w202-vpu-stop
+RemainAfterExit=yes
+TimeoutStopSec=5
+
+[Install]
+WantedBy=multi-user.target

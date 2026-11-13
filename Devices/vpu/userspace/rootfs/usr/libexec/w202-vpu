@@ -1,0 +1,102 @@
+#!/bin/bash
+set -euo pipefail
+usage() {
+    echo 'Usage: w202-vpu status|start|stop|decode INPUT [OUTPUT.y4m|-]'
+    echo 'Decode H264 video to a Y4M stream. Output defaults to stdout.'
+}
+case "${1:---help}" in
+    --help|-h) usage; exit 0 ;;
+    status)
+        status=0
+        systemctl is-active w202-vpu.service || status=$?
+        if test -r /sys/bus/platform/devices/32200000.video-codec/state; then
+            cat /sys/bus/platform/devices/32200000.video-codec/state
+            cat /sys/bus/platform/devices/32200000.video-codec/power/runtime_status
+        fi
+        exit "$status" ;;
+    start|stop)
+        test "$(id -u)" = 0 || { echo 'Run with sudo to control the decoder' >&2; exit 1; }
+        if test "$1" = stop; then
+            exec 9>/run/lock/w202-vpu.lock
+            flock -n 9 || { echo 'VPU decode is active' >&2; exit 1; }
+            flock -u 9
+        fi
+        systemctl "$1" w202-vpu.service
+        if test "$1" = stop && test -d /sys/module/w202_vpu_codec; then
+            echo 'VPU modules remain loaded; stop was refused' >&2
+            exit 1
+        fi
+        exit 0 ;;
+    decode) shift ;;
+    *) usage >&2; exit 2 ;;
+esac
+test "$#" -ge 1 && test "$#" -le 2 || { usage >&2; exit 2; }
+test "$(id -u)" = 0 || { echo 'Run decode with sudo' >&2; exit 1; }
+input=$(readlink -f -- "$1")
+test -f "$input" && test -r "$input" || { echo 'Readable local video file required' >&2; exit 1; }
+output=${2:--}
+metadata=$(ffprobe -v error -select_streams v:0 \
+    -show_entries stream=codec_name,width,height,pix_fmt,avg_frame_rate,r_frame_rate,field_order \
+    -of default=noprint_wrappers=1 -- "$input")
+codec_name= width= height= pix_fmt= avg_frame_rate= r_frame_rate= field_order=
+while IFS='=' read -r key value; do
+    case "$key" in
+        codec_name) codec_name=$value ;; width) width=$value ;; height) height=$value ;;
+        pix_fmt) pix_fmt=$value ;; avg_frame_rate) avg_frame_rate=$value ;;
+        r_frame_rate) r_frame_rate=$value ;; field_order) field_order=$value ;;
+    esac
+done <<< "$metadata"
+test "$codec_name" = h264 && test "$pix_fmt" = yuv420p || { echo 'Decoder requires 8-bit 4:2:0 H264 video' >&2; exit 1; }
+case "$field_order" in progressive|unknown|'') ;; *) echo 'Interlaced output is not supported' >&2; exit 1 ;; esac
+fps=$avg_frame_rate
+if test -z "$fps" || test "$fps" = 0/0; then fps=$r_frame_rate; fi
+[[ "$width" =~ ^[0-9]+$ && "$height" =~ ^[0-9]+$ && "$fps" =~ ^[0-9]+/[0-9]+$ ]] || { echo 'Invalid video dimensions or frame rate' >&2; exit 1; }
+systemctl start w202-vpu.service
+umask 077
+exec 9>/run/lock/w202-vpu.lock
+flock -n 9 || { echo 'VPU decode is active' >&2; exit 1; }
+# A direct systemctl stop may have completed between start and flock. With
+# ownership held, re-establish the complete service before opening hardware.
+systemctl start w202-vpu.service
+output_tmp=
+decode_pid=
+cleanup() {
+    if test -n "$decode_pid"; then
+        kill -TERM -- "-$decode_pid" 2>/dev/null || kill -TERM "$decode_pid" 2>/dev/null || true
+        # FFmpeg's signal handler can remain blocked on a full output pipe;
+        # bound shutdown even after the group leader has already exited.
+        sleep 0.1
+        kill -KILL -- "-$decode_pid" 2>/dev/null || true
+        wait "$decode_pid" 2>/dev/null || true
+    fi
+    if test -n "$output_tmp"; then rm -f -- "$output_tmp"; fi
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM HUP
+decode() {
+    # A separate process group lets TERM/INT of the command also stop the
+    # demuxer, namespace supervisor and hardware worker. wait is interruptible.
+    setsid /bin/bash -o pipefail -c '
+        ffmpeg -nostdin -hide_banner -loglevel error -i "$1" -map 0:v:0 -an -sn -dn \
+            -c:v copy -bsf:v h264_mp4toannexb,h264_metadata=aud=insert -f h264 - | \
+            unshare --mount --net --pid --fork --kill-child=KILL --propagation private \
+            /usr/libexec/w202-vpu-worker-ns "$2" "$3" "$4" "$5"
+    ' w202-vpu-stream "$input" "$width" "$height" "${fps%/*}" "${fps#*/}" &
+    decode_pid=$!
+    result=0
+    wait "$decode_pid" || result=$?
+    decode_pid=
+    return "$result"
+}
+if test "$output" = -; then
+    decode
+else
+    test ! -e "$output" && test ! -L "$output" || { echo 'Output already exists' >&2; exit 1; }
+    output_tmp=$(mktemp -- "${output}.w202.XXXXXXXX")
+    decode > "$output_tmp"
+    # Same-directory hard link publishes only after success and never clobbers.
+    ln -- "$output_tmp" "$output"
+    rm -- "$output_tmp"
+    output_tmp=
+fi
