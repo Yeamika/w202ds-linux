@@ -27,6 +27,8 @@ install:
 	install -D -m 0755 rootfs/usr/libexec/w202-vpu-stop "$(DESTDIR)/usr/libexec/w202-vpu-stop"
 	install -D -m 0755 rootfs/usr/libexec/w202-vpu-worker-ns "$(DESTDIR)/usr/libexec/w202-vpu-worker-ns"
 	install -D -m 0644 rootfs/usr/lib/systemd/system/w202-vpu.service "$(DESTDIR)/usr/lib/systemd/system/w202-vpu.service"
+	install -d -m 0755 "$(DESTDIR)/usr/bin"
+	ln -sfn ../libexec/w202-vpu "$(DESTDIR)/usr/bin/w202-vpu"
 
 $(OUT) $(OUT)/native:
 	mkdir -p "$@"
