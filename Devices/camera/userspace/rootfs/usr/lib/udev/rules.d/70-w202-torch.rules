@@ -1,0 +1,4 @@
+# LED class sysfs attributes need their own permissions, not a device-node GROUP.
+SUBSYSTEM=="leds", KERNEL=="white:torch", ACTION=="add", \
+  RUN+="/bin/chgrp video /sys%p/brightness", \
+  RUN+="/bin/chmod g+w /sys%p/brightness"

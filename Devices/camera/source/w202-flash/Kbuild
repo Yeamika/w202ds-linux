@@ -1,0 +1,1 @@
+obj-m := w202_flash_aw36518.o
