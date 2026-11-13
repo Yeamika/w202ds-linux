@@ -1,5 +1,5 @@
 [Unit]
-Description=W202DS AUDCP and AW88166 speakers
+Description=W202DS AUDCP speakers and microphones
 After=local-fs.target systemd-modules-load.service
 Before=display-manager.service
 

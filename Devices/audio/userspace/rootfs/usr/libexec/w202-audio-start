@@ -1,0 +1,80 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+# Boot-time audio bring-up. Never unbind the built-in audio clocks.
+set -eu
+capture=0
+modules='w202_audio_amp w202_audio_dsp w202_audio_vbc w202_audio_pcm w202_audio_card'
+if test -e /sys/firmware/devicetree/base/alsa-speakers/zte,audio-mic; then
+    capture=1
+    modules="$modules w202_audio_mic"
+fi
+release=$(uname -r)
+for name in $modules; do
+    test "$(modinfo -F vermagic "$name" | cut -d ' ' -f 1)" = "$release" || {
+        echo "W202DS audio: $name does not match $release" >&2
+        exit 1
+    }
+done
+/sbin/modprobe unisoc_mailbox
+/sbin/modprobe w202_audio_amp
+/sbin/modprobe w202_audio_dsp
+test -L /sys/bus/platform/devices/65006400.audcp-iram/driver || {
+    echo 'W202DS audio: AUDCP did not boot; see kernel log' >&2
+    exit 1
+}
+clock=56200000.clock-controller
+attempt=0
+while ! test -L "/sys/bus/platform/devices/$clock/driver"; do
+    attempt=$((attempt + 1))
+    if test "$attempt" -gt 50; then
+        # A clock deferred past the global probe timeout needs one retry.
+        # The AUDCP provider is ready; bind only, never unbind a live clock.
+        printf '%s' "$clock" > /sys/bus/platform/drivers/ums9620-clk/bind
+        test -L "/sys/bus/platform/devices/$clock/driver" || {
+            echo 'W202DS audio: audio clocks unavailable' >&2
+            exit 1
+        }
+        break
+    fi
+    sleep 0.1
+done
+/sbin/modprobe sprd_dma
+/sbin/modprobe snd_soc_aw88166
+/sbin/modprobe w202_audio_vbc
+/sbin/modprobe w202_audio_pcm
+if test "$capture" = 1; then
+    /sbin/modprobe w202_audio_mic
+fi
+/sbin/modprobe w202_audio_card
+# Driver registration and udev node creation may complete after modprobe.
+# Locate our ALSA card by ID; another sound device may have claimed card 0.
+attempt=0
+while :; do
+    card=
+    for id_file in /sys/class/sound/card*/id; do
+        test -f "$id_file" || continue
+        IFS= read -r id < "$id_file"
+        if test "$id" = Speakers; then
+            card=${id_file%/id}
+            card=${card##*/card}
+            break
+        fi
+    done
+    if test -n "$card" && test -c "/dev/snd/controlC$card" &&
+       test -c "/dev/snd/pcmC${card}D0p"; then
+        if test "$capture" = 0 || test -c "/dev/snd/pcmC${card}D1c"; then
+            break
+        fi
+    fi
+    attempt=$((attempt + 1))
+    test "$attempt" -le 100 || {
+        echo 'W202DS audio: expected PCM devices did not become ready' >&2
+        exit 1
+    }
+    sleep 0.05
+done
+if test "$capture" = 1; then
+    echo 'W202DS speaker and microphone card ready'
+else
+    echo 'W202DS speaker card ready'
+fi

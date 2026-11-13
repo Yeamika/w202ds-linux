@@ -143,7 +143,10 @@ static int w202_pcm_hw_params(struct snd_soc_component *component,
 			      struct snd_pcm_substream *substream,
 			      struct snd_pcm_hw_params *params)
 {
-	static const char * const names[] = { "normal_p_l", "normal_p_r" };
+	static const char * const names[2][2] = {
+		[SNDRV_PCM_STREAM_PLAYBACK] = { "normal_p_l", "normal_p_r" },
+		[SNDRV_PCM_STREAM_CAPTURE] = { "normal_c_l", "normal_c_r" },
+	};
 	struct snd_soc_pcm_runtime *rtd = snd_soc_substream_to_rtd(substream);
 	struct w202_pcm_dma_params *dma;
 	struct w202_pcm *pcm = substream->runtime->private_data;
@@ -158,7 +161,7 @@ static int w202_pcm_hw_params(struct snd_soc_component *component,
 	for (i = 0; i < ARRAY_SIZE(pcm->channels); i++) {
 		struct w202_pcm_channel *c = &pcm->channels[i];
 
-		c->chan = dma_request_chan(component->dev, names[i]);
+		c->chan = dma_request_chan(component->dev, names[substream->stream][i]);
 		if (IS_ERR(c->chan)) {
 			ret = PTR_ERR(c->chan);
 			c->chan = NULL;
@@ -174,6 +177,8 @@ static int w202_pcm_prepare(struct snd_soc_component *component,
 {
 	struct snd_pcm_runtime *runtime = substream->runtime;
 	struct w202_pcm *pcm = runtime->private_data;
+	bool playback = substream->stream == SNDRV_PCM_STREAM_PLAYBACK;
+	enum dma_transfer_direction dir = playback ? DMA_MEM_TO_DEV : DMA_DEV_TO_MEM;
 	size_t bytes = snd_pcm_lib_buffer_bytes(substream) / 2;
 	size_t period = snd_pcm_lib_period_bytes(substream) / 2;
 	struct scatterlist *sg;
@@ -191,10 +196,12 @@ static int w202_pcm_prepare(struct snd_soc_component *component,
 	WRITE_ONCE(pcm->running, false);
 	for (i = 0; i < ARRAY_SIZE(pcm->channels); i++) {
 		struct w202_pcm_channel *c = &pcm->channels[i];
+		dma_addr_t buffer = runtime->dma_addr + i * bytes;
+		/* SPRD DMA takes the fragment length from src_maxburst in both directions. */
 		struct dma_slave_config config = {
-			.direction = DMA_MEM_TO_DEV,
-			.src_addr = runtime->dma_addr + i * bytes,
-			.dst_addr = pcm->params.fifo[i],
+			.direction = dir,
+			.src_addr = playback ? buffer : pcm->params.fifo[i],
+			.dst_addr = playback ? pcm->params.fifo[i] : buffer,
 			.src_addr_width = DMA_SLAVE_BUSWIDTH_2_BYTES,
 			.dst_addr_width = DMA_SLAVE_BUSWIDTH_2_BYTES,
 			.src_maxburst = W202_PCM_FRAGMENT * sizeof(s16),
@@ -218,11 +225,11 @@ static int w202_pcm_prepare(struct snd_soc_component *component,
 			break;
 		sg_init_table(sg, periods);
 		for (j = 0; j < periods; j++) {
-			sg_dma_address(&sg[j]) = runtime->dma_addr + i * bytes + j * period;
+			sg_dma_address(&sg[j]) = buffer + j * period;
 			sg_dma_len(&sg[j]) = period;
 		}
 		c->desc = c->chan->device->device_prep_slave_sg(c->chan, sg, periods,
-							 DMA_MEM_TO_DEV, flags, &link);
+							 dir, flags, &link);
 		if (!c->desc) {
 			ret = -ENOMEM;
 			break;

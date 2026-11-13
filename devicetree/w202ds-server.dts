@@ -44,3 +44,6 @@
 /include/ "../Devices/storage/devicetree/w202ds-storage.dtsi"
 /include/ "../Devices/thermal/devicetree/w202ds-thermal.dtsi"
 /include/ "w202ds-memory.dtsi"
+
+// Apply the Linux ALSA bindings before the kernel scans reserved memory.
+/include/ "../Devices/audio/devicetree/w202ds-alsa.dtsi"

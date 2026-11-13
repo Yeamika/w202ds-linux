@@ -64,9 +64,13 @@ struct w202_dsp_startup {
 
 struct w202_audio_dsp;
 struct w202_audio_dsp *w202_audio_dsp_get(struct device *consumer);
-int w202_audio_dsp_command(struct w202_audio_dsp *dsp, u16 command,
+/*
+ * stream is the factory aud_send_cmd parameter[1]: SNDRV_PCM_STREAM_PLAYBACK (0)
+ * or SNDRV_PCM_STREAM_CAPTURE (1) of the normal AP01 scene (parameter[0] = 0).
+ */
+int w202_audio_dsp_command(struct w202_audio_dsp *dsp, u16 command, u32 stream,
 			   const void *data, size_t size);
-int w202_audio_dsp_trigger(struct w202_audio_dsp *dsp);
+int w202_audio_dsp_trigger(struct w202_audio_dsp *dsp, u32 stream);
 int w202_audio_dsp_control(struct w202_audio_dsp *dsp, u32 id,
 			    const void *data, size_t size);
 int w202_audio_dsp_profile(struct w202_audio_dsp *dsp, u32 mode,

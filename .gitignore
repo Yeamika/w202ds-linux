@@ -6,7 +6,6 @@ device.json
 /Devices/reference/
 /Devices/*/reference/
 /Devices/*/modules/
-/Devices/*/userspace/
 SOURCES*.json
 
 # Publish only the selected contents of each hardware directory.
@@ -16,6 +15,7 @@ SOURCES*.json
 !/Devices/*/devicetree/
 !/Devices/*/firmware/
 !/Devices/*/source/
+!/Devices/*/userspace/
 
 # Reference snapshots and the retired diagnostic recovery project stay local.
 /Devices/**/vendor-reference/
@@ -23,37 +23,15 @@ SOURCES*.json
 /Devices/*/source/mainline-current/
 /Devices/pmic/source/diagnostic-recovery/
 
-# Publish modem userspace sources and configuration; keep delivery packages local.
-!/Devices/modem/userspace/
-!/Devices/modem/userspace/SOURCES.json
-/Devices/modem/userspace/releases/
-/Devices/modem/userspace/server-runtime-20261103-v5/
-/Devices/modem/userspace/output/
-
-# WCN Bluetooth initializer, standard BlueZ service and local protocol tests.
-!/Devices/wcn/userspace/
-/Devices/wcn/userspace/output/
-
 # Publish the GPU implementation already verified on W202DS.
 /Devices/gpu/source/*
 !/Devices/gpu/source/panfrost/
 !/Devices/gpu/source/README.md
 
-# Publish VPU userspace sources; keep runtime packages and external dependencies local.
-!/Devices/vpu/userspace/
-/Devices/vpu/userspace/*
-!/Devices/vpu/userspace/README.md
-!/Devices/vpu/userspace/source/
-
-# Publish audio startup integration; keep generated test audio/packages local.
-!/Devices/audio/userspace/
-/Devices/audio/userspace/*
-!/Devices/audio/userspace/w202-audio-start
-!/Devices/audio/userspace/w202-audio.service
-
-# Keep keyboard diagnostic state snapshots local.
-/Devices/keyboard/source/keyboard-m22/super-layout.json
-/Devices/keyboard/source/keyboard-m22/*-lease.json
-
-# Sensor hub module startup and standard IIO sensor-proxy integration.
-!/Devices/sensorhub/userspace/
+# Userspace sources and service templates are published; build caches are not.
+/Devices/*/userspace/**/output/
+/Devices/*/userspace/**/build/
+/Devices/*/userspace/**/components.local.json
+# Independent experimental upstream checkouts are optional source caches.
+/Devices/gpu/userspace/mesa/
+/Devices/vpu/userspace/libva-v4l2_request/

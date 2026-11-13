@@ -17,7 +17,7 @@
 | [运动、磁场与光线传感器](sensorhub/README.md) | LSM6DSOQ（加速度 / 陀螺仪）、MMC5603（磁力计）、LTR578（光线） | 🟡 | 10 通道原始数据可读；方向、单位、校准及自动旋转 / 亮度待验。 |
 | [触摸屏](touchscreen/README.md) | Himax HX83102J | ❓ | 有历史 Linux 输入记录；当前触摸及固件重载待复测，默认未启用。 |
 | [USB / Type-C 接口](usb3/README.md) | UMS9620 DWC3 / USB PHY；外接接口芯片型号未确认 | ❓ | USB 串口 / 网络有历史验证；OTG、PD、DP 外显及网卡共存待验。 |
-| [扬声器与麦克风](audio/README.md) | UMP9620 音频 codec；AW883xx 功放（具体型号未确认） | ❌ | 播放、录音及完整音频链路尚未验收。 |
+| [扬声器与麦克风](audio/README.md) | UMP9620 音频 codec；四颗 AW88166 功放 | 🟡 | 扬声器播放与主麦 / 背麦录音已验证（用户实听确认）；耳机、通话、挂起恢复待验。 |
 | [摄像头](camera/README.md) | GC13A0（1300 万像素）、SC520CS（500 万像素），原系统报告 | ❌ | Linux 拍照与录像尚未验证；前后摄对应关系待确认。 |
 | [神经网络处理器](npu/README.md) | IMG AX3xxx 系列 NNA（设备树标识，具体型号未确认） | ❌ | 尚无可运行、经验证的推理功能。 |
 | [视觉数字信号处理器](vdsp/README.md) | UMS9620 集成 VDSP | ❌ | 尚无可交付、经验证的独立运行功能。 |

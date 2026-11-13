@@ -1,3 +1,2 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /include/ "../../../devicetree/w202ds-server.dts"
-/include/ "w202ds-alsa.dtsi"

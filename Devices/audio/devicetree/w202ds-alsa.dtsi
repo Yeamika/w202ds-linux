@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-only
-// Optional BOOT-TIME configuration for the matching W202DS ALSA modules.
+// Boot-time configuration for the matching W202DS ALSA modules.
 // This changes reserved-memory and ownership: never apply as a live overlay.
 / {
 	w202_amp_bank: amplifier-bank {
@@ -13,6 +13,7 @@
 		zte,audio-cpu = <0x10d>;
 		zte,audio-platform = <0x109>;
 		zte,audio-codecs = <0x10f 0x110 0x111 0x112>;
+		zte,audio-mic = <0x10e>;
 	};
 };
 
@@ -66,9 +67,19 @@
 &{/sprd-pcm-audio} {
 	compatible = "zte,w202ds-pcm";
 	power-domains = <0xf9>;
-	dmas = <0xf8 1 0xf8 2>;
-	dma-names = "normal_p_l", "normal_p_r";
+	/* AGCP DMA requests 1-4: AP01 playback L/R, AP01 record L/R (factory DT). */
+	dmas = <0xf8 1 0xf8 2 0xf8 3 0xf8 4>;
+	dma-names = "normal_p_l", "normal_p_r", "normal_c_l", "normal_c_r";
 	status = "okay";
+};
+
+// UMP9620 analog codec; digital-codec, 26 MHz sinout and lrdat-sel stay as imported.
+&{/soc/aon/spi@400000/pmic@0/audio-codec@1000} {
+	compatible = "zte,w202ds-mic-codec";
+	#sound-dai-cells = <0>;
+	power-domains = <0xf9>;
+	clocks = <0xbb 13 0xbb 14>; // CLK_AUDCP_AUD_EB, CLK_AUDIF_CKG_AUTO_EN
+	clock-names = "aud", "audif";
 };
 
 &{/soc/ap-ahb/i2c@22c0000/aw883xx_smartpa@34} {

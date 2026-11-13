@@ -229,13 +229,13 @@ unlock:
 	return ret;
 }
 
-int w202_audio_dsp_command(struct w202_audio_dsp *dsp, u16 command,
+int w202_audio_dsp_command(struct w202_audio_dsp *dsp, u16 command, u32 stream,
 			   const void *data, size_t size)
 {
 	int ret;
 
 	mutex_lock(&dsp->command_lock);
-	ret = w202_dsp_command_locked(dsp, command, 0, 0, data, size);
+	ret = w202_dsp_command_locked(dsp, command, 0, stream, data, size);
 	mutex_unlock(&dsp->command_lock);
 	return ret;
 }
@@ -277,11 +277,12 @@ out:
 }
 EXPORT_SYMBOL_GPL(w202_audio_dsp_profile);
 
-int w202_audio_dsp_trigger(struct w202_audio_dsp *dsp)
+/* Factory scene_normal_trigger: aud_send_cmd_no_wait(0, 7, 0, stream, 1, 0). */
+int w202_audio_dsp_trigger(struct w202_audio_dsp *dsp, u32 stream)
 {
 	struct w202_dsp_message msg = {
 		.command = cpu_to_le16(W202_DSP_CMD_TRIGGER),
-		.parameter[2] = cpu_to_le32(1),
+		.parameter = { 0, cpu_to_le32(stream), cpu_to_le32(1) },
 	};
 	unsigned long flags;
 	int ret;
@@ -340,13 +341,14 @@ static int w202_dsp_update(struct w202_audio_dsp *dsp, enum w202_dsp_control id,
 				value << __ffs(reg->mask));
 }
 
+/* PMU power states read 0 once the AGCP system/DSP domain is powered. */
 static int w202_dsp_poll(struct w202_audio_dsp *dsp, enum w202_dsp_control id)
 {
 	struct w202_dsp_reg *reg = &dsp->control[id];
 	u32 value;
 
 	return regmap_read_poll_timeout(reg->map, reg->offset, value,
-					!(value & reg->mask), 20, 100000);
+					!(value & reg->mask), 100, 1000000);
 }
 
 static int w202_dsp_attach(struct generic_pm_domain *domain, struct device *dev)
@@ -398,6 +400,32 @@ static void w202_dsp_stop(struct w202_audio_dsp *dsp)
 	regmap_update_bits(dsp->control[AP_ACCESS].map,
 			   dsp->control[AP_ACCESS].offset,
 			   dsp->control[AP_ACCESS].mask, dsp->saved_access);
+}
+
+/* Record power, IPC and image state before a failed boot is reset. */
+static void w202_dsp_report_boot_timeout(struct w202_audio_dsp *dsp)
+{
+	struct w202_dsp_message msg;
+	u32 status[3];
+	u8 image[16];
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(status); i++) {
+		struct w202_dsp_reg *reg = &dsp->control[SYS_STATUS + i];
+
+		if (regmap_read(reg->map, reg->offset, &status[i]))
+			status[i] = U32_MAX;
+		else
+			status[i] &= reg->mask;
+	}
+	memcpy_fromio(image, dsp->firmware, sizeof(image));
+	memcpy_fromio(&msg, w202_ring(dsp, true), sizeof(msg));
+	dev_err(dsp->dev,
+		"AUDCP not ready: rx %u/%u tx %u/%u first %04x/%04x/%08x sys %#x core %#x sleep %#x image %16ph\n",
+		readl(w202_ring_ptr(dsp, true, false)), readl(w202_ring_ptr(dsp, true, true)),
+		readl(w202_ring_ptr(dsp, false, false)), readl(w202_ring_ptr(dsp, false, true)),
+		le16_to_cpu(msg.command), le16_to_cpu(msg.channel), le32_to_cpu(msg.parameter[0]),
+		status[0], status[1], status[2], image);
 }
 
 static int w202_dsp_probe(struct platform_device *pdev)
@@ -498,19 +526,27 @@ static int w202_dsp_probe(struct platform_device *pdev)
 	W202_BOOT_WRITE(CORE_RESET, 0);
 	W202_BOOT_WRITE(SYS_RESET, 0);
 #undef W202_BOOT_WRITE
-	if (!wait_for_completion_timeout(&dsp->boot_done, msecs_to_jiffies(3000)) ||
-	    !w202_audio_dsp_ready(dsp)) {
-		ret = -ETIMEDOUT;
-		goto stop;
-	}
+	/*
+	 * AGCP stays powered down until the AUDCP sees a wakeup. Like
+	 * agdsp_access_enable, ring doorbell 100 and wait for the PMU to report
+	 * the AGCP system and DSP domains on before expecting the boot message.
+	 */
 	ret = w202_dsp_doorbell(dsp, 100);
 	if (ret)
 		goto stop;
 	ret = w202_dsp_poll(dsp, SYS_STATUS);
 	if (!ret)
 		ret = w202_dsp_poll(dsp, CORE_STATUS);
-	if (ret)
+	if (ret) {
+		w202_dsp_report_boot_timeout(dsp);
 		goto stop;
+	}
+	if (!wait_for_completion_timeout(&dsp->boot_done, msecs_to_jiffies(3000)) ||
+	    !w202_audio_dsp_ready(dsp)) {
+		w202_dsp_report_boot_timeout(dsp);
+		ret = -ETIMEDOUT;
+		goto stop;
+	}
 
 	/* Keep AP access enabled: clock/DMA consumers cannot take vendor votes. */
 	dsp->domain.name = dev_name(dev);

@@ -1,0 +1,2 @@
+# W202DS: let PipeWire use both PCMs of the ALSA card (speakers 0, microphones 1).
+SUBSYSTEM=="sound", ACTION=="change", KERNEL=="card*", ATTR{id}=="Speakers", ENV{ACP_PROFILE_SET}="w202ds.conf"
