@@ -54,7 +54,7 @@ cc -std=c11 -O2 -Wall -Wextra -Werror test_protocol.c -o /work/test-protocol
 
 `w202_hub_protocol.h` 被驱动与该测试共同使用，覆盖真实帧、双环碎片、CRC 损坏恢复、最大帧和数值异常拒绝。
 
-开机加载与 iio-sensor-proxy 配置见 [../../userspace/README.md](../../userspace/README.md)。原始 `w202-hubctl` 和本模块会消费同一接收环，不能并行采样；时钟同步诊断模块不应与本模块的周期同步重复运行。
+开机加载与 iio-sensor-proxy 配置见 [用户态集成](../../userspace/README.md)。原始 `w202-hubctl` 和本模块会消费同一接收环，不能并行采样；时钟同步诊断模块不应与本模块的周期同步重复运行。
 
 ## 验证与 TODO
 

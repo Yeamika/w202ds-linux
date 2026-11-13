@@ -7,10 +7,20 @@ device=sprd-sensorhub
 driver=/sys/bus/platform/drivers/w202-hub-iio
 
 modprobe w202_hub_iio
-for attempt in $(seq 30); do
+if ! test -w "$driver/bind"; then
+    echo "w202-hub-iio bind interface is unavailable; check the module and permissions." >&2
+    exit 1
+fi
+
+attempt=0
+while test "$attempt" -lt 30; do
     test -e "$driver/$device" && exit 0
-    echo "$device" > "$driver/bind" 2>/dev/null || true
-    sleep 1
+    { printf '%s\n' "$device" > "$driver/bind"; } 2>/dev/null || :
+    test -e "$driver/$device" && exit 0
+    attempt=$((attempt + 1))
+    if test "$attempt" -lt 30; then
+        sleep 1
+    fi
 done
-echo "$device did not bind to w202-hub-iio within 30 s; see the kernel log." >&2
+echo "$device did not bind to w202-hub-iio after 30 attempts; see the kernel log." >&2
 exit 1

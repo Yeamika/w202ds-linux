@@ -1,5 +1,7 @@
 # M22 R4：原厂 UART 键盘和触控板
 
+当前目录只维护内核实现与共用协议头。用户态 attach、基础服务及诊断已归入 [用户态目录](../../userspace/README.md)，分别构建；KDE 行为由 REIMUKS 定义；下文保留原验证记录。
+
 ## 键盘套拆装与平板模式（2026-11-08）
 
 GPIO 检测键盘套连接状态，新增标准 `EV_SW/SW_TABLET_MODE` 输入设备
@@ -38,4 +40,4 @@ GPIO 检测键盘套连接状态，新增标准 `EV_SW/SW_TABLET_MODE` 输入设
 
 证据：`../m21-debug-evidence/live-20261026/run/m22-keyboard/`，包含`accepted-input-state.txt`、`accepted-input-devices.txt`、`unloaded-gpio.txt`、两类原始串口报文、evdev原始事件与Weston日志。最后重载后统计归零，验收值应读取accepted文件。
 
-历史验收时 RAM attach PID9120 与 Weston 保留运行，此状态不适用于本次源码导入。持久 rootfs 集成中的 systemd 服务采用标准版本模块目录和前台 attach；本目录 `w202-keyboard-start` 针对旧 initramfs 平铺模块布局。
+历史验收时 RAM attach PID9120 与 Weston 保留运行，此状态不适用于本次源码导入。持久 rootfs 集成中的 systemd 服务采用标准版本模块目录和前台 attach；旧 `w202-keyboard-start` 针对历史 initramfs 平铺模块布局，已退出当前源码交付。

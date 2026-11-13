@@ -5,10 +5,14 @@ keyboard/
 ├── build.mk
 ├── devicetree/
 ├── README.md
-└── source/
-    ├── keyboard-m22/             # UART 键盘／触控板与连接检测
-    └── plasma-tablet-keyboard/   # KDE 虚拟键盘拆装联动
+├── source/keyboard-m22/      # UART 键盘／触控板与连接检测
+└── userspace/               # UART attach、服务模板和协议检查
 ```
+
+用户态程序、服务模板和诊断见 [userspace](userspace/README.md)。
+
+键盘套拆下时 `W202DS Tablet Mode` 上报 `EV_SW/SW_TABLET_MODE=1`，接回上报 0；
+桌面通过标准 input 接口消费状态。KDE 虚拟键盘与旋转等行为由 REIMUKS 定义。
 
 | 功能 | 可用性 | 问题描述 |
 | --- | --- | --- |

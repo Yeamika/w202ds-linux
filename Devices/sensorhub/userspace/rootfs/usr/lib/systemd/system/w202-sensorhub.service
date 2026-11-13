@@ -8,6 +8,7 @@ Before=iio-sensor-proxy.service
 [Service]
 Type=oneshot
 RemainAfterExit=yes
+TimeoutStartSec=60s
 ExecStart=/usr/libexec/w202-sensorhub-attach
 ExecStop=/sbin/modprobe -r w202_hub_iio
 
