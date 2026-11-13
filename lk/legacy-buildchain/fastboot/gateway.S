@@ -57,6 +57,7 @@ lk_fb_gateway:
     /* Disable allocations before cleaning every data/unified cache. Keep
      * translation active until all EFI dirty lines have reached memory. */
     bl cache_off
+    bl install_status
     bl install_print
     ldr x16, =W202_LK_CONTEXT_ADDRESS
     bl load_environment
@@ -75,6 +76,7 @@ lk_fb_gateway:
     bl cache_off
     /* Restore the three original instruction pairs before returning to EFI
      * or later resuming Android/native Fastboot. No flash bytes are changed. */
+    bl restore_status
     bl restore_print
     ldr x16, =W202_LK_FB_CONTEXT
     bl load_environment
@@ -182,6 +184,47 @@ load_environment:
     load_sys sctlr_el1,36
     dsb sy
     tlbi alle2
+    ic iallu
+    dsb sy
+    isb
+    ret
+
+/* Redirect native module INFO into bounded RAM storage. No nested USB calls.
+ * Patched only with MMU/caches off and restored before returning to UEFI. */
+install_status:
+    ldr x16,=W202_LK_FB_CONTEXT
+    ldr x9,=0xb500e11c
+    ldr w10,[x9]
+    ldr w11,[x9,#4]
+    ldr w12,[x9,#8]
+    ldr w13,[x9,#12]
+    add x17,x16,#560
+    stp w10,w11,[x17]
+    stp w12,w13,[x17,#8]
+    ldr x10,=0xd61f020018000050 // ldr w16, .+8; br x16 (32-bit native VA)
+    ldr x11,=lk_fb_capture_status
+    str w10,[x9]
+    lsr x10,x10,#32
+    str w10,[x9,#4]
+    str w11,[x9,#8]
+    lsr x11,x11,#32
+    str w11,[x9,#12]
+    dsb sy
+    ic iallu
+    dsb sy
+    isb
+    ret
+restore_status:
+    ldr x16,=W202_LK_FB_CONTEXT
+    ldr x9,=0xb500e11c
+    add x17,x16,#560
+    ldp w10,w11,[x17]
+    ldp w12,w13,[x17,#8]
+    str w10,[x9]
+    str w11,[x9,#4]
+    str w12,[x9,#8]
+    str w13,[x9,#12]
+    dsb sy
     ic iallu
     dsb sy
     isb

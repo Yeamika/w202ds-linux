@@ -12,6 +12,7 @@ import runpy
 ROOT = Path(__file__).resolve().parent
 PATHS = runpy.run_path(str(ROOT/'tools/project_paths.py'))
 CONTAINER = runpy.run_path(str(ROOT/'tools/lk_container.py'))
+VERIFIER = runpy.run_path(str(ROOT/'tools/verify_firmware.py'))
 
 
 def load_inputs(file):
@@ -141,6 +142,7 @@ def main():
               'artifacts':{str(f.relative_to(out)):{'bytes':f.stat().st_size,
                  'sha256':hashlib.sha256(f.read_bytes()).hexdigest()} for f in sorted(artifacts)}}
     (out/'firmware-manifest.json').write_text(json.dumps(record,indent=2)+'\n')
+    VERIFIER['verify'](out, 'firmware-manifest.json')
     print(out/'firmware-manifest.json')
 
 

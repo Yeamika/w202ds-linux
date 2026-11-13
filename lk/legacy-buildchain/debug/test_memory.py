@@ -15,18 +15,18 @@ BASE, ARG, STACK, END, DDR = 0x86000000, 0x8a001000, 0xb5e00000, 0xb6001000, 0x8
 
 
 class MemoryTest(unittest.TestCase):
-    def run_reader(self, address=DDR, size=0x2000, operation=':probe'):
+    def run_reader(self, address=DDR, size=0x2000, operation=':probe', base=BASE):
         module = bytearray((Path(os.environ['LK_MEMORY_BUILD'])/'ramboot-memory.bin').read_bytes())
         struct.pack_into('<QQ', module, 16, address, size)
         u = Uc(UC_ARCH_ARM64, UC_MODE_ARM)
-        for start, length in ((BASE,0x200000),(ARG,0x1000),(STACK-0x10000,0x10000),
+        for start, length in ((base,0x200000),(ARG,0x1000),(STACK-0x10000,0x10000),
                               (END,0x1000),(0xb500e000,0x1000),(DDR,0x2000)):
             u.mem_map(start,length)
         data = bytes(i % 251 for i in range(0x2000))
         if 0xc8000000 <= address < 0xcc800000:
             u.mem_map(address & ~0xfff, 0x3000)
             u.mem_write(address,data)
-        u.mem_write(BASE,bytes(module))
+        u.mem_write(base,bytes(module))
         u.mem_write(DDR,data)
         u.mem_write(ARG,operation.encode()+b'\0')
         u.reg_write(UC_ARM64_REG_SP,STACK)
@@ -43,7 +43,7 @@ class MemoryTest(unittest.TestCase):
             packets.append(text.decode())
             uc.reg_write(UC_ARM64_REG_PC,uc.reg_read(UC_ARM64_REG_LR))
         u.hook_add(UC_HOOK_CODE,status)
-        u.emu_start(BASE,END,count=2000000)
+        u.emu_start(base,END,count=2000000)
         self.assertEqual(u.reg_read(UC_ARM64_REG_PC),END)
         self.assertEqual(u.reg_read(UC_ARM64_REG_SP),STACK)
         self.assertEqual(bytes(u.mem_read(DDR,len(data))),data)
@@ -51,6 +51,11 @@ class MemoryTest(unittest.TestCase):
 
     def test_reader_returns_all_bytes_with_a_valid_checksum(self):
         text,data,result=self.run_reader()
+        self.assertEqual(result,0)
+        self.assertEqual(API['decode_packets'](text,DDR,len(data)),data)
+
+    def test_reader_relocates_away_from_live_uefi_service(self):
+        text,data,result=self.run_reader(base=0x86200000)
         self.assertEqual(result,0)
         self.assertEqual(API['decode_packets'](text,DDR,len(data)),data)
 

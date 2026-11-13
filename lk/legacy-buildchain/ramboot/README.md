@@ -63,3 +63,26 @@ make -C lk/legacy-buildchain/ramboot \
 ## 来源与参考
 
 解析器、公开上游和许可证见 [仓库说明](../../README.md) 与 [输入版本](../../pocketjs4edk2_uefi/inputs.lock.json)。固定原厂 ABI、签名基线和冷启动日志来自本机备份与探针；实际文件选择由外层传入。本目录与旧 PJB 的 `resident/resident-*.S` 分别维护各自的启动逻辑。
+
+### RAM probes while the UEFI menu is active
+
+The menu Fastboot accepts `stage` followed by `oem jump-rmk :probe` for
+position-independent PLK1 version 2 modules. It runs them at `0x86200000`,
+leaving the resident service at `0x86000000` intact. Modules must return,
+keep the display untouched and use PC-relative module-local references.
+Native INFO replies are captured in bounded RAM at `0x86500000` and replayed
+through the polled USB service. Output overflow returns FAIL.
+
+The memory reader and `debug/read.py` support this path. The tool adapts its
+header for native LK Fastboot's historical version 1 hook. Legacy fixed-address
+modules and ownership-changing `:init`/`:enter` operations require native LK;
+the menu rejects them rather than overwriting its resident service. CPU context,
+page permissions and patched native status/display functions are restored after
+a returning probe. A module that faults or fails to return still needs watchdog
+recovery.
+
+`debug/read.py` defaults to 512-byte probes on menu Fastboot, checking each
+chunk's addresses and CRC before assembling the requested dump. Native LK keeps
+its larger transfers. `--chunk-size` and `--timeout` can override these defaults;
+command timeouts retain partial output in `fastboot.log` and do not publish a
+successful `memory.bin`.

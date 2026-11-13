@@ -43,8 +43,15 @@ static int write_raw(const char *name,uint64_t n,uint64_t upd,uint64_t off,const
     memcpy(partition+off,p,n);return 0;
 }
 static void reason(unsigned value) { bootloader=value; }
+static int probe_failure;
+static int probe(const void *data,uint64_t bytes) {
+    assert(data==test_download && bytes==512);
+    lk_fb_capture_status("INFO","PJ4EDK2 BEGIN 82ffe000 00000010");
+    lk_fb_capture_status("INFO","PJ4EDK2 MEM 82ffe000 00000000000000000000000000000000");
+    return probe_failure;
+}
 const struct lk_fb_ops lk_fb_native={start,stop_usb,poll,ready,queue_int,complete,
-    clock_ms,size,read_raw,write_raw,reason};
+    clock_ms,size,read_raw,write_raw,reason,probe};
 static uint64_t tick(void) { ++now;return lk_fb_service(W202_LK_FB_POLL); }
 static void wait_queue(unsigned tx) {
     for(unsigned i=0;!pending && i<12;++i)tick();
@@ -114,6 +121,19 @@ int main(void) {
     send_command("continue");assert(response("OKAY")==W202_LK_FB_CONTINUE);
     reset();send_bytes("flash:boot_b\0bad",16);response("FAIL");assert(!writes);
     reset();fail_queue=1;assert(tick()==UINT64_MAX && !s->active);
+    reset();send_command("download:00000200");response("DATA");
+    send_bytes(image,512);response("OKAY");
+    send_command("oem jump-rmk :probe");
+    response("INFOPJ4EDK2 BEGIN");response("INFOPJ4EDK2 MEM");response("OKAY");
+    assert(!s->downloaded && !writes && !reads);
+    send_command("getvar:version");response("OKAY0.4");
+    send_command("oem jump-rmk :init");response("FAIL");
+    reset();send_command("download:00000200");response("DATA");
+    send_bytes(image,512);response("OKAY");probe_failure=1;
+    send_command("oem jump-rmk :probe");
+    response("INFO");response("INFO");response("FAIL");probe_failure=0;
+    reset();s->output_count=PROBE_LINES;
+    lk_fb_capture_status("INFO","overflow");assert(s->output_overflow);
     puts("Fastboot asynchronous download, full flash, exact slot, readback and fault cases passed");
     return 0;
 }

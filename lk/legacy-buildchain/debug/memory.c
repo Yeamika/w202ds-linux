@@ -22,7 +22,8 @@ static char *hex32(char *out, uint32_t value)
 
 int memory_read(const char *operation)
 {
-    const volatile uint64_t *args = (const void *)(uintptr_t)0x86000010;
+    extern const volatile uint64_t memory_parameters[];
+    const volatile uint64_t *args = memory_parameters;
     uint64_t address = args[0], size = args[1];
     uint32_t crc = UINT32_MAX;
     char line[60], *out;

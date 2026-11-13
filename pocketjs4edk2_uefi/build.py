@@ -16,6 +16,7 @@ PATHS = runpy.run_path(str(ROOT/'tools/project_paths.py'))
 default_repository = PATHS['default_repository']
 LK = PATHS['lk_directory']()
 CONTAINER = runpy.run_path(str(ROOT/'tools/lk_container.py'))
+VERIFIER = runpy.run_path(str(ROOT/'tools/verify_firmware.py'))
 RUNTIME_SOURCES = ('edk2-libc', 'pocketjs', 'quickjs')
 
 
@@ -256,7 +257,8 @@ def main():
     artifacts = [a.output/'w202ds.fd', a.output/'ramboot.img', a.output/'ramboot-uefi.bin', resident/'uboot-b-uefi.img',
                  resident/'manifest.json', efi/'efi-build.json', *sorted((efi/'bin').glob('*.efi')),
                  *sorted((a.output/'ESP').rglob('*.efi')), *debug_tools]
-    manifest = {'schema': 1, 'revision': a.revision, 'device_validation': 'not-tested',
+    manifest = {'schema': 1, 'board': 'w202ds', 'stage': 'all',
+                'revision': a.revision, 'device_validation': 'not-tested',
                 'partition_images': partition_images,
                 'lk_base_features': lk_base_features,
                 'source_repositories': {name: repository_identity(path) for name, path in
@@ -268,6 +270,7 @@ def main():
                 'default_ui': runtime_inputs['default_ui'],
                 'artifacts': {str(f.relative_to(a.output)): {'bytes': f.stat().st_size, 'sha256': sha(f)} for f in artifacts}}
     (a.output/'manifest.json').write_text(json.dumps(manifest, indent=2)+'\n')
+    VERIFIER['verify'](a.output, 'manifest.json')
     print(json.dumps({'manifest': str(a.output/'manifest.json'), 'revision': a.revision,
                       'artifacts': manifest['artifacts'], 'device_validation': 'not-tested'}, indent=2))
 

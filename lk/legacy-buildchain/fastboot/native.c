@@ -67,5 +67,25 @@ static void reset_reason(unsigned bootloader) {
     void (*const write)(uint32_t,uint32_t,uint32_t)=(void *)0xb506cf70;
     write(0x644223ac,(read(0x644223ac)&~255u)|(bootloader?0x30:0x40),1);
 }
+static void module_permissions(volatile uint64_t *entry,uint64_t value) {
+    *entry=value;
+    __asm__ volatile("dc cvac, %0; dsb ishst; tlbi alle2is; dsb ish; isb"::"r"(entry):"memory");
+}
+static int probe(const void *image,uint64_t bytes) {
+    const uint32_t *header=image;
+    volatile uint64_t *entry=(void *)0xb5f01188;
+    uint64_t old=*entry;
+    if(bytes<32 || bytes>0x200000 || header[1]!=bytes ||
+       header[2]!=0x314b4c50 || header[3]!=2 || (old&2) ||
+       (old&UINT64_C(0x0000ffffffe00000))!=0x86200000) return -1;
+    uint8_t *to=(void *)0x86200000;
+    const uint8_t *from=image;
+    for(uint64_t i=0;i<bytes;++i) to[i]=from[i];
+    ((void (*)(void *,uint64_t))0xb5004dc0)(to,bytes);
+    module_permissions(entry,(old&~UINT64_C(0x0060000000000000))|0x80);
+    int result=((int (*)(const char *))to)(":probe");
+    module_permissions(entry,old);
+    return result;
+}
 const struct lk_fb_ops lk_fb_native={start,stop,poll,ready,queue_record,complete,
-    clock_ms,lk_partition_size,lk_raw_read,lk_raw_write,reset_reason};
+    clock_ms,lk_partition_size,lk_raw_read,lk_raw_write,reset_reason,probe};

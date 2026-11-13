@@ -16,8 +16,10 @@ struct lk_fb_ops {
     int (*read)(const char *, uint64_t, uint64_t, void *);
     int (*write)(const char *, uint64_t, uint64_t, uint64_t, const void *);
     void (*reset_reason)(unsigned bootloader);
+    int (*probe)(const void *image, uint64_t bytes);
 };
 extern const struct lk_fb_ops lk_fb_native;
 uint64_t lk_fb_service(uint64_t operation);
 void lk_fb_prepare(void);
+void lk_fb_capture_status(const char *code, const char *message);
 #endif

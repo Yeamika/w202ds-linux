@@ -7,10 +7,11 @@
 #include "flash.h"
 #include "LkFastboot.h"
 
-enum { IDLE, RX_COMMAND, TX_REPLY, RX_DATA, FLASH_IMAGE };
+enum { IDLE, RX_COMMAND, TX_REPLY, RX_DATA, FLASH_IMAGE, PROBE_OUTPUT };
 struct fb_state {
     unsigned active, phase, next_phase, queued, action, tx_bytes, queue_bytes, connected;
     uint64_t deadline, expected, received, downloaded, offset;
+    unsigned output_count, output_index, output_overflow, probe_result;
     char name[36];
     uint8_t tx[64] __attribute__((aligned(64)));
     uint8_t io[LK_FLASH_CHUNK] __attribute__((aligned(64)));
@@ -26,6 +27,23 @@ extern uint8_t test_download[];
 static struct fb_state *const s = (void *)0x86410000;
 #define DOWNLOAD ((uint8_t *)(uintptr_t)LK_FB_DOWNLOAD_BASE)
 #endif
+/* Reserved outside the UEFI allocator, module code and gateway context.
+ * Capture native INFO without nested USB requests; replay one packet per poll.
+ */
+#define PROBE_LINES 8192u
+#ifdef LK_FASTBOOT_TEST
+static char probe_lines[PROBE_LINES][60];
+#else
+#define probe_lines ((char (*)[60])(uintptr_t)0x86500000)
+#endif
+void lk_fb_capture_status(const char *code, const char *message) {
+    if(!code || code[0]!='I' || code[1]!='N' || code[2]!='F' || code[3]!='O') return;
+    if(s->output_count==PROBE_LINES) { s->output_overflow=1;return; }
+    char *out=probe_lines[s->output_count++];
+    unsigned n=0;
+    if(message) while(n<59 && message[n]) { out[n]=message[n];++n; }
+    out[n]=0;
+}
 static unsigned length(const char *a) { unsigned n=0; while(a[n]) ++n; return n; }
 static int equal(const char *a, const char *b) {
     while(*a && *a==*b) { ++a; ++b; } return *a==*b;
@@ -90,6 +108,13 @@ static void command(char *cmd) {
         }
         copy(s->name,name,length(name)+1);s->offset=0;s->phase=FLASH_IMAGE;
         s->deadline=lk_fb_native.clock_ms()+30000;
+    } else if(equal(cmd,"oem jump-rmk :probe")) {
+        /* Only a returning probe is legal under a live UEFI UI. :init/:enter
+         * change machine ownership and belong to native LK Fastboot. */
+        s->output_count=s->output_index=s->output_overflow=0;
+        s->probe_result=lk_fb_native.probe ? lk_fb_native.probe(DOWNLOAD,s->downloaded) : -1;
+        s->downloaded=0;
+        s->phase=PROBE_OUTPUT;
     } else if(equal(cmd,"continue") || equal(cmd,"reboot") || equal(cmd,"reboot-bootloader")) {
         s->action=equal(cmd,"continue")?W202_LK_FB_CONTINUE:
             equal(cmd,"reboot")?W202_LK_FB_REBOOT:W202_LK_FB_BOOTLOADER;
@@ -124,6 +149,14 @@ uint64_t lk_fb_service(uint64_t operation) {
         reset_parser();return 0;
     }
     s->connected=1;
+    if(s->phase==PROBE_OUTPUT) {
+        if(s->output_index<s->output_count)
+            reply("INFO",probe_lines[s->output_index++],PROBE_OUTPUT);
+        else if(s->probe_result || s->output_overflow)
+            fail(s->output_overflow?"probe output overflow":"invalid or failed returning PLK1 probe");
+        else reply("OKAY","",RX_COMMAND);
+        return W202_LK_FB_BUSY;
+    }
     if(s->phase==FLASH_IMAGE) {
         unsigned n=s->downloaded-s->offset<LK_FLASH_CHUNK?s->downloaded-s->offset:LK_FLASH_CHUNK;
         if(lk_fb_native.write(s->name,n,0,s->offset,DOWNLOAD+s->offset) ||

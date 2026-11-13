@@ -57,7 +57,13 @@ def main():
     p.add_argument('--address', type=lambda x: int(x, 0), default=0x82ffe000)
     p.add_argument('--size', type=lambda x: int(x, 0), default=0x2000)
     p.add_argument('--output', type=Path, required=True, help='fresh output directory')
+    p.add_argument('--chunk-size', type=lambda x: int(x, 0), default=0,
+                   help='bytes per returning probe; default 512 on menu, 64 KiB on native LK')
+    p.add_argument('--timeout', type=float, default=45,
+                   help='seconds allowed for each Fastboot command')
     a = p.parse_args()
+    if a.timeout <= 0 or (a.chunk_size and (a.chunk_size % 16 or not 16 <= a.chunk_size <= 0x10000)):
+        p.error('choose a positive timeout and a 16-byte-aligned chunk size up to 64 KiB')
     end = (0xc0000000 if 0x80000000 <= a.address < 0xc0000000 else
            0xcc800000 if 0xc8000000 <= a.address < 0xcc800000 else 0)
     if (not end or not 0 < a.size <= 0x10000
@@ -67,22 +73,45 @@ def main():
     if a.output.exists():
         p.error('choose a fresh output directory')
     module = bytearray(a.module.read_bytes())
-    if (len(module) < 32 or module[8:16] != b'PLK1\x01\0\0\0'
+    if (len(module) < 32 or (module[8:12] != b'PLK1' or struct.unpack_from('<I', module, 12)[0] not in (1, 2))
             or struct.unpack_from('<I', module, 4)[0] != len(module)):
         p.error('incorrect PLK1 memory reader module')
-    struct.pack_into('<QQ', module, 16, a.address, a.size)
+    # Native LK retains the historical v1 hook; the same position-independent
+    # reader can run there after adapting only the header version.
+    version = subprocess.run([a.fastboot, '-s', a.serial, 'getvar', 'version'],
+                             capture_output=True, text=True, timeout=10)
+    if version.returncode:
+        raise RuntimeError('Fastboot version query failed')
+    native = bool(re.search(r'version:\s*1\.0\b', version.stdout + version.stderr))
+    if native:
+        struct.pack_into('<I', module, 12, 1)
     a.output.mkdir(parents=True)
-    patched = a.output/'memory-reader.bin'
-    patched.write_bytes(module)
+    chunk_size = a.chunk_size or (0x10000 if native else 512)
     transcript = ''
-    for args in (['stage', str(patched.resolve())], ['oem', 'jump-rmk', ':probe']):
-        r = subprocess.run([a.fastboot, '-s', a.serial, *args], capture_output=True,
-                           text=True, errors='replace', timeout=45)
-        transcript += r.stdout + r.stderr
-        (a.output/'fastboot.log').write_text(transcript, encoding='utf-8')
-        if r.returncode:
-            raise RuntimeError('Fastboot RAM read failed; see fastboot.log')
-    data = decode_packets(transcript, a.address, a.size)
+    chunks = []
+    for offset in range(0, a.size, chunk_size):
+        count = min(chunk_size, a.size-offset)
+        struct.pack_into('<QQ', module, 16, a.address+offset, count)
+        patched = a.output/'memory-reader.bin'
+        patched.write_bytes(module)
+        chunk_log = ''
+        for args in (['stage', str(patched.resolve())], ['oem', 'jump-rmk', ':probe']):
+            try:
+                r = subprocess.run([a.fastboot, '-s', a.serial, *args], capture_output=True,
+                                   text=True, errors='replace', timeout=a.timeout)
+            except subprocess.TimeoutExpired as error:
+                def text(value):
+                    return value.decode('utf-8', errors='replace') if isinstance(value, bytes) else value or ''
+                transcript += chunk_log + text(error.stdout) + text(error.stderr)
+                (a.output/'fastboot.log').write_text(transcript, encoding='utf-8')
+                raise RuntimeError('Fastboot RAM read timed out; partial output saved in fastboot.log') from error
+            chunk_log += r.stdout + r.stderr
+            (a.output/'fastboot.log').write_text(transcript+chunk_log, encoding='utf-8')
+            if r.returncode:
+                raise RuntimeError('Fastboot RAM read failed; see fastboot.log')
+        chunks.append(decode_packets(chunk_log, a.address+offset, count))
+        transcript += chunk_log
+    data = b''.join(chunks)
     (a.output/'memory.bin').write_bytes(data)
     trace, log = decode_trace(data, a.address)
     report = {'address': hex(a.address), 'bytes': len(data),

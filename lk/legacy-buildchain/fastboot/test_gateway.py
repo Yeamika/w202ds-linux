@@ -9,7 +9,7 @@ import re
 import struct
 import subprocess
 import unittest
-from unicorn import Uc, UC_ARCH_ARM64, UC_MODE_ARM, UC_HOOK_CODE, UC_HOOK_MEM_WRITE
+from unicorn import Uc, UC_ARCH_ARM64, UC_MODE_ARM, UC_HOOK_CODE, UC_HOOK_MEM_WRITE, UC_HOOK_MEM_READ
 from unicorn import arm64_const as reg
 
 class GatewayTest(unittest.TestCase):
@@ -31,6 +31,8 @@ class GatewayTest(unittest.TestCase):
         uc.mem_write(0x86000000,self.image)
         text={0xb5035e94:b'ABCDEFGH',0xb5035c78:b'12345678',0xb5087d98:b'LCDTEXT!'}
         for address,body in text.items():uc.mem_write(address,body)
+        status_original=b'STATUS-ORIGINAL!'
+        uc.mem_write(0xb500e11c,status_original)
         def R(name):return getattr(reg,'UC_ARM64_REG_'+name.upper())
         original={name:0x111100+i for i,name in enumerate(
             ['sctlr_el2','ttbr0_el2','tcr_el2','mair_el2','vbar_el2','hcr_el2','cptr_el2',
@@ -62,6 +64,7 @@ class GatewayTest(unittest.TestCase):
                     if name not in ('fpcr','fpsr'):
                         self.assertEqual(system[name],0x222200+index,(name,'LK context'))
                 self.assertEqual(system['daif']&0x3c0,0x3c0)
+                self.assertEqual(bytes(u.mem_read(0xb500e11c,16)),struct.pack('<IIQ',0x18000050,0xd61f0200,self.symbols['lk_fb_capture_status']))
                 for a in text:self.assertEqual(bytes(u.mem_read(a,8)),bytes.fromhex('00008052c0035fd6'))
                 lr=u.reg_read(R('x30'))
                 for name in registers:
@@ -77,18 +80,82 @@ class GatewayTest(unittest.TestCase):
                 u.reg_write(reg.UC_ARM64_REG_PC,address+4)
             elif op in ('ic','dc','dsb','isb','tlbi'):
                 u.reg_write(reg.UC_ARM64_REG_PC,address+4)
+        def aligned(u,kind,address,size,value,unused):
+            if size==8:self.assertEqual(address%8,0,"MMU-off native text access must be aligned")
+        uc.hook_add(UC_HOOK_MEM_READ | UC_HOOK_MEM_WRITE,aligned)
         def write(u,kind,address,size,value,unused):
             self.assertTrue(0x86408000<=address<0x86408400 or
-                any(a<=address<a+8 for a in text),f'unexpected write {address:x}')
+                0xb500e11c<=address<0xb500e12c or any(a<=address<a+8 for a in text),f'unexpected write {address:x}')
         uc.hook_add(UC_HOOK_CODE,step)
         uc.hook_add(UC_HOOK_MEM_WRITE,write)
         uc.emu_start(self.symbols['lk_fb_gateway'],0xcc001000,count=30000)
         self.assertEqual(uc.reg_read(reg.UC_ARM64_REG_PC),0xcc001000)
         for name,value in registers.items():self.assertEqual(uc.reg_read(R(name)),value,name)
         for name,value in original.items():self.assertEqual(system[name],value,name)
+        self.assertEqual(bytes(uc.mem_read(0xb500e11c,16)),status_original)
         for address,body in text.items():self.assertEqual(bytes(uc.mem_read(address,8)),body)
         self.assertEqual(uc.reg_read(R('x0')),(result if el==8 else -1)&0xffffffffffffffff)
         self.assertEqual(calls,[operation] if el==8 else [])
+
+    def test_status_thunk_uses_only_four_byte_aligned_native_accesses(self):
+        u=Uc(UC_ARCH_ARM64,UC_MODE_ARM)
+        u.mem_map(0xb500e000,0x1000)
+        u.mem_map(0x86000000,0x1000)
+        u.mem_map(0xcc001000,0x1000)
+        # Native status is four-byte aligned; its literal must use LDR W.
+        u.mem_write(0xb500e11c,struct.pack('<IIQ',0x18000050,0xd61f0200,0x86000000))
+        u.mem_write(0x86000000,bytes.fromhex('c0035fd6'))
+        u.reg_write(reg.UC_ARM64_REG_X0,0x1234)
+        u.reg_write(reg.UC_ARM64_REG_X1,0x5678)
+        u.reg_write(reg.UC_ARM64_REG_X30,0xcc001000)
+        def aligned(uc,kind,address,size,value,unused):
+            self.assertEqual(address%size,0)
+        u.hook_add(UC_HOOK_MEM_READ,aligned)
+        u.emu_start(0xb500e11c,0xcc001000,count=10)
+        self.assertEqual(u.reg_read(reg.UC_ARM64_REG_PC),0xcc001000)
+        self.assertEqual(u.reg_read(reg.UC_ARM64_REG_X0),0x1234)
+        self.assertEqual(u.reg_read(reg.UC_ARM64_REG_X1),0x5678)
+
+    def test_native_probe_preserves_service_and_restores_execute_permissions(self):
+        reader=bytearray((Path(os.environ['LK_MEMORY_BUILD'])/'ramboot-memory.bin').read_bytes())
+        struct.pack_into('<QQ',reader,16,0x82ffe000,16)
+        for version in (1,2):
+            with self.subTest(version=version):
+                struct.pack_into('<I',reader,12,version)
+                u=Uc(UC_ARCH_ARM64,UC_MODE_ARM)
+                for a,n in ((0x86000000,0x10000),(0x86200000,0x200000),
+                            (0x86400000,0x40000),(0x88000000,0x10000),
+                            (0x82ffe000,0x2000),(0xb5000000,0x1000000),
+                            (0xcc001000,0x1000)):
+                    u.mem_map(a,n)
+                u.mem_write(0x86000000,self.image)
+                u.mem_write(0x88000000,bytes(reader))
+                old=0x0060000086200701
+                u.mem_write(0xb5f01188,struct.pack('<Q',old))
+                u.mem_write(0x82ffe000,bytes(range(16)))
+                u.reg_write(reg.UC_ARM64_REG_SP,0x86440000)
+                u.reg_write(reg.UC_ARM64_REG_X30,0xcc001000)
+                u.reg_write(reg.UC_ARM64_REG_X0,0x88000000)
+                u.reg_write(reg.UC_ARM64_REG_X1,len(reader))
+                packets=[]
+                def step(uc,pc,size,unused):
+                    if pc==0xb5004dc0:
+                        self.assertEqual(uc.reg_read(reg.UC_ARM64_REG_X0),0x86200000)
+                        uc.reg_write(reg.UC_ARM64_REG_PC,uc.reg_read(reg.UC_ARM64_REG_X30))
+                    elif pc==0xb500e11c:
+                        a=uc.reg_read(reg.UC_ARM64_REG_X1)
+                        packets.append(bytes(uc.mem_read(a,60)).split(b'\0')[0])
+                        uc.reg_write(reg.UC_ARM64_REG_PC,uc.reg_read(reg.UC_ARM64_REG_X30))
+                    elif self.ins.get(pc,('',))[0] in ('dc','dsb','tlbi','isb'):
+                        uc.reg_write(reg.UC_ARM64_REG_PC,pc+4)
+                u.hook_add(UC_HOOK_CODE,step)
+                u.emu_start(self.symbols['probe'],0xcc001000,count=100000)
+                self.assertEqual(u.reg_read(reg.UC_ARM64_REG_PC),0xcc001000)
+                self.assertEqual(u.reg_read(reg.UC_ARM64_REG_SP),0x86440000)
+                self.assertEqual(bytes(u.mem_read(0x86000000,len(self.image))),self.image)
+                self.assertEqual(struct.unpack('<Q',bytes(u.mem_read(0xb5f01188,8)))[0],old)
+                self.assertEqual(u.reg_read(reg.UC_ARM64_REG_X0)==0,version==2)
+                self.assertEqual(len(packets),3 if version==2 else 0)
 
     def test_repeated_service_calls_restore_efi_and_print(self):
         for operation,result in [(1,0),(2,1),(2,0),(2,-1),(3,0)]:

@@ -37,7 +37,7 @@ static int write_raw(const char *name,uint64_t n,uint64_t upd,uint64_t off,const
 }
 static void reason(unsigned bootloader) { (void)bootloader; }
 const struct lk_fb_ops lk_fb_native={start,stop_usb,poll,ready,queue,complete,
-    clock_ms,size,read_raw,write_raw,reason};
+    clock_ms,size,read_raw,write_raw,reason,NULL};
 void host_reset(void) {
     stop_usb();lk_fb_prepare();lk_fb_service(W202_LK_FB_START);
 }
