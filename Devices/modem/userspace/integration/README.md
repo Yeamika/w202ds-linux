@@ -37,3 +37,25 @@ APN 按 SIM 配置。本次 IPv4 已验证，IPv6 未验收。Wi-Fi metric 600 �
 同日补充：NetworkManager 会自动枚举普通网口，不能只靠 ModemManager 的适配识别内部接口。将 `NetworkManager/conf.d/31-w202-sipa-internal.conf` 安装到 `/etc/NetworkManager/conf.d/`，排除 `sipa_dummy*`。`sipa_dummy0` 是 SIPA 共享接收／NAPI 辅助网口；保持驱动创建的 UP 状态，不把它关闭，也不对其运行 DHCP。真实蜂窝数据仍由 MM/NM 管理 `sipa_eth0`。
 
 当前设备已 reload 配置，删除只绑定 dummy 的错误自动有线连接，并设 dummy 为 unmanaged、保持 UP；修复后没有新的 dummy DHCP 失败。Wi-Fi 和蜂窝分别绑定真实接口、指定实际 IPv4 并保留 TLS 主机名验证，HTTPS 均返回 200。路由器会为部分域名返回 fake IP，蜂窝专项测试应使用蜂窝 DNS 得到的实际地址，避免将 Wi-Fi 的 fake IP 用到蜂窝接口。未因此修改全局 DNS 或路由；冷启后的持久规则仍待实机回归。
+
+## USB 有线网卡共享
+
+平板 USB-C 口（主机模式）接 USB 有线网卡（`enx*`，例如 Realtek `r8152` 驱动的网卡）时，
+把平板当前的上游（Wi-Fi 或蜂窝）经该网卡共享给另一端设备。使用 NetworkManager 自带的
+`ipv4.method=shared`（内置 dnsmasq 提供 DHCP / DNS，NAT 出口跟随默认路由）和 `ipv6.method=shared`，
+不新增守护进程。
+
+将 `NetworkManager/system-connections/w202-usb-ethernet-share.nmconnection` 以 root:root、0600
+安装到 `/etc/NetworkManager/system-connections/` 后 `nmcli connection reload`。连接名“USB 网络共享”，
+`match.interface-name=enx*`，只匹配外接 USB 网卡，不碰 USB gadget 的 `usb0` 与 SIPA 内部网口；
+`autoconnect-priority=10`，插入网卡即自动启用。模板不含 UUID，由 NetworkManager 按文件生成。
+
+rootfs 需要的包：`firmware-realtek`（`r8152` 为部分 RTL815x 芯片加载 `rtl_nic/` 固件）；
+另装 `systemd-timesyncd` 并保持默认启用，开机经 NTP 校时（未校时前本机日志时间停在 2026-04-14，
+证书校验会因时间错误失败）。我方 GNOME rootfs 构建脚本（不在本仓库）已把两包加入安装列表，并把本连接以 0600 装入。
+
+2026-11-09 实机（GNOME 48，NetworkManager 1.52.1，内核 `6.18.35-w202ds-m23-audio-20261109`）：
+USB 网卡 `enx00e04c713c03` 接 realme GT 8，“USB 网络共享”自动激活；dnsmasq 租约
+`10.42.0.182 realme-GT-8`，用户确认手机经该有线连接正常上网。`timedatectl` 报告
+`System clock synchronized: yes`、`NTP service: active`。未验证：蜂窝作为上游时的有线共享、
+IPv6 客户端、与 Wi-Fi 热点同时共享。

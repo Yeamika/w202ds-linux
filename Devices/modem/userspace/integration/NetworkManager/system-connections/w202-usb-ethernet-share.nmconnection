@@ -1,0 +1,18 @@
+[connection]
+id=USB 网络共享
+type=ethernet
+autoconnect-priority=10
+
+[ethernet]
+
+[match]
+interface-name=enx*;
+
+[ipv4]
+method=shared
+
+[ipv6]
+addr-gen-mode=default
+method=shared
+
+[proxy]
